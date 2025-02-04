@@ -1,3 +1,4 @@
+# app.py
 import asyncio
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
@@ -11,9 +12,11 @@ from aiogram.types import (
     ReactionTypeEmoji
 )
 from aiogram.enums import ChatMemberStatus, ChatType
+from flask import Flask, request
 from database import database
 from keyboard import online
 
+app = Flask(__name__)
 token = "6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg"
 
 bot = Bot(token)
@@ -185,6 +188,25 @@ async def handler_message(message: Message):
         except Exception as e:
             print(f"Ошибка при пересылке: {e}")
 
+@app.route('/')
+def index():
+    return "Bot is running!"
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_data = request.get_json()
+        update = types.Update(**json_data)
+        asyncio.run(dp.feed_webhook_update(bot, update))
+        return ''
+    return 'Invalid content type', 400
+
+async def set_webhook():
+    await bot.set_webhook(
+        url="YOUR_RENDER_URL/webhook",
+        drop_pending_updates=True
+    )
+
 async def main():
     await bot.set_my_commands([
         BotCommand(command="/start", description="Начать поиск"),
@@ -192,7 +214,10 @@ async def main():
         BotCommand(command="/next", description="Новый собеседник"),
         BotCommand(command="/link", description="Поделиться профилем")
     ])
-    await dp.start_polling(bot)
+    await set_webhook()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
+    app.run(host='0.0.0.0', port=5000)
