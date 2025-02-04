@@ -10,7 +10,7 @@ from aiogram.types import (
     MessageReactionUpdated,
     ReactionTypeEmoji
 )
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.enums import ChatMemberStatus
 from database import database
 from keyboard import online
 
@@ -42,10 +42,8 @@ async def start_command(message: Message):
 
 @dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
 async def block_links(message: Message):
-    # Добавляем проверку на тип чата
-    if message.chat.type == ChatType.PRIVATE:
-        await message.delete()
-        await message.answer("❌ Отправка ссылок и упоминаний запрещена!")
+    await message.delete()
+    await message.answer("❌ Отправка ссылок и упоминаний запрещена!")
 
 @dp.message(F.text == "🔎 Найти чат")
 async def search_chat(message: Message):
@@ -109,6 +107,7 @@ async def link_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user["status"] == 2:
         try:
+            # Создаем кнопку с ссылкой
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
                     text="👤 Профиль собеседника",
@@ -116,6 +115,7 @@ async def link_command(message: Message):
                 )]
             ])
 
+            # Отправляем кнопку собеседнику
             await bot.send_message(
                 chat_id=user["rid"],
                 text="🔗 Ваш собеседник поделился ссылкой:",
@@ -146,10 +146,12 @@ async def handle_reaction(event: MessageReactionUpdated):
     if user and user["status"] == 2 and event.new_reaction:
         rival_id = user["rid"]
         try:
+            # Получаем ID оригинального сообщения из базы
             original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
             if not original_msg_id:
-                return
+                return  # Если связь не найдена, пропускаем
 
+            # Формируем реакции
             reaction = [
                 ReactionTypeEmoji(emoji=r.emoji)
                 for r in event.new_reaction
@@ -166,13 +168,10 @@ async def handle_reaction(event: MessageReactionUpdated):
 
 @dp.message()
 async def handler_message(message: Message):
-    # Проверяем что сообщение из личного чата
-    if message.chat.type != ChatType.PRIVATE:
-        return
-
     user = db.get_user_cursor(message.from_user.id)
     if user and user["status"] == 2:
         try:
+            # Пересылаем сообщение
             if message.photo:
                 sent_msg = await bot.send_photo(user["rid"], message.photo[-1].file_id, caption=message.caption)
             elif message.text:
@@ -184,6 +183,7 @@ async def handler_message(message: Message):
             elif message.sticker:
                 sent_msg = await bot.send_sticker(user["rid"], message.sticker.file_id)
 
+            # Сохраняем связь в обе стороны
             db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
             db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
 
