@@ -1,6 +1,6 @@
 import asyncio
-from aiogram import Bot, Dispatcher
-from aiogram.filters import Command, Text
+from aiogram import Bot, F, Dispatcher
+from aiogram.filters import Command
 from aiogram.types import (
     Message, 
     CallbackQuery, 
@@ -40,12 +40,12 @@ async def start_command(message: Message):
     else:
         await search_chat(message)
 
-@dp.message(Text.regexp(r'https?://\S+|@\w+') | Text.caption.regexp(r'https?://\S+|@\w+'))
+@dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
 async def block_links(message: Message):
     await message.delete()
     await message.answer("❌ Отправка ссылок и упоминаний запрещена!")
 
-@dp.message(Text("🔎 Найти чат"))
+@dp.message(F.text == "🔎 Найти чат")
 async def search_chat(message: Message):
     if not await is_subscribed(message.from_user.id):
         subscribe_markup = InlineKeyboardMarkup(inline_keyboard=[
@@ -74,7 +74,7 @@ async def search_chat(message: Message):
             await message.answer(text, reply_markup=online.builder("❌ Завершить диалог"))
             await bot.send_message(rival["id"], text, reply_markup=online.builder("❌ Завершить диалог"))
 
-@dp.callback_query(Text("check_sub"))
+@dp.callback_query(F.data == "check_sub")
 async def check_subscription(callback: CallbackQuery):
     if await is_subscribed(callback.from_user.id):
         await callback.message.edit_text("✅ Спасибо за подписку! Теперь вы можете использовать бота.")
@@ -107,6 +107,7 @@ async def link_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user["status"] == 2:
         try:
+            # Создаем кнопку с ссылкой
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
                     text="👤 Профиль собеседника",
@@ -114,6 +115,7 @@ async def link_command(message: Message):
                 )]
             ])
 
+            # Отправляем кнопку собеседнику
             await bot.send_message(
                 chat_id=user["rid"],
                 text="🔗 Ваш собеседник поделился ссылкой:",
@@ -124,14 +126,14 @@ async def link_command(message: Message):
             print(f"Ошибка отправки ссылки: {e}")
             await message.answer("❌ Не удалось отправить ссылку")
 
-@dp.message(Text("❌ Завершить поиск"))
+@dp.message(F.text == "❌ Завершить поиск")
 async def stop_search(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user["status"] == 1:
         db.stop_search(message.from_user.id)
         await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
 
-@dp.message(Text("❌ Завершить диалог"))
+@dp.message(F.text == "❌ Завершить диалог")
 async def stop_chat(message: Message):
     await stop_command(message)
 
@@ -144,10 +146,12 @@ async def handle_reaction(event: MessageReactionUpdated):
     if user and user["status"] == 2 and event.new_reaction:
         rival_id = user["rid"]
         try:
+            # Получаем ID оригинального сообщения из базы
             original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
             if not original_msg_id:
-                return
+                return  # Если связь не найдена, пропускаем
 
+            # Формируем реакции
             reaction = [
                 ReactionTypeEmoji(emoji=r.emoji)
                 for r in event.new_reaction
@@ -167,6 +171,7 @@ async def handler_message(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user["status"] == 2:
         try:
+            # Пересылаем сообщение
             if message.photo:
                 sent_msg = await bot.send_photo(user["rid"], message.photo[-1].file_id, caption=message.caption)
             elif message.text:
@@ -178,6 +183,7 @@ async def handler_message(message: Message):
             elif message.sticker:
                 sent_msg = await bot.send_sticker(user["rid"], message.sticker.file_id)
 
+            # Сохраняем связь в обе стороны
             db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
             db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
 
