@@ -2,11 +2,11 @@ import asyncio
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    BotCommand,
+    Message, 
+    CallbackQuery, 
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    BotCommand, 
     MessageReactionUpdated,
     ReactionTypeEmoji
 )
