@@ -1,6 +1,6 @@
 # app.py
 import asyncio
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
     Message,
@@ -8,7 +8,6 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    MessageReactionUpdated,
     ReactionTypeEmoji
 )
 from aiogram.enums import ChatMemberStatus, ChatType
@@ -43,7 +42,6 @@ async def start_command(message: Message):
     else:
         await search_chat(message)
 
-# Добавлен недостающий обработчик search_chat
 @dp.message(F.text == "🔎 Найти чат")
 async def search_chat(message: Message):
     if not await is_subscribed(message.from_user.id):
@@ -73,10 +71,8 @@ async def search_chat(message: Message):
             await message.answer(text, reply_markup=online.builder("❌ Завершить диалог"))
             await bot.send_message(rival["id"], text, reply_markup=online.builder("❌ Завершить диалог"))
 
-# Остальные обработчики остаются без изменений...
-
 @dp.message_reaction()
-async def handle_reaction(event: MessageReactionUpdated):
+async def handle_reaction(event: types.MessageReactionUpdated):
     if event.old_reaction == event.new_reaction:
         return
 
@@ -113,7 +109,7 @@ def webhook():
 
 async def set_webhook():
     await bot.set_webhook(
-        url="YOUR_RENDER_URL/webhook",  # Замените на реальный URL
+        url="YOUR_RENDER_URL/webhook",
         drop_pending_updates=True
     )
 
@@ -131,3 +127,4 @@ if __name__ == "__main__":
     asyncio.set_event_loop(loop)
     loop.run_until_complete(main())
     app.run(host='0.0.0.0', port=5000)
+    
