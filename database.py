@@ -1,86 +1,66 @@
 import sqlite3
-from sqsnip import database as db
 
-class database:
+class Database:
     def __init__(self, db_name: str):
-        # Инициализация таблицы пользователей
-        self.users_db = db(
-            db_name, 
-            "users",
-            """
-                id INTEGER PRIMARY KEY,
-                status INTEGER DEFAULT 0,
-                rid INTEGER DEFAULT 0
-            """
-        )
+        self.conn = sqlite3.connect(db_name)
+        self.cursor = self.conn.cursor()
+        self._init_db()
 
-        # Инициализация таблицы связей сообщений
-        self.messages_db = db(
-            db_name,
-            "message_links",
-            """
-                user_id INTEGER,
-                message_id INTEGER,
-                rival_message_id INTEGER,
-                PRIMARY KEY(user_id, message_id)
-            """
-        )
+    def _init_db(self):
+        # Создаем таблицу пользователей
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+                            id INTEGER PRIMARY KEY,
+                            searching INTEGER DEFAULT 0
+                            )''')
+                            
+        # Создаем таблицу чатов
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS chats (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user1 INTEGER,
+                            user2 INTEGER,
+                            FOREIGN KEY(user1) REFERENCES users(id),
+                            FOREIGN KEY(user2) REFERENCES users(id)
+                            )''')
+        self.conn.commit()
 
-    def get_user_cursor(self, user_id: int) -> dict:
-        result = self.users_db.select("*", {"id": user_id}, False)
-        return {
-            "status": result[1],
-            "rid": result[2]
-        } if result else None
+    def add_user(self, user_id: int):
+        self.cursor.execute("INSERT OR IGNORE INTO users (id) VALUES (?)", (user_id,))
+        self.conn.commit()
 
-    def get_users_in_search(self) -> int:
-        result = self.users_db.select("*", {"status": 1}, True)
-        return len(result) if result else 0
+    def get_user(self, user_id: int) -> dict:
+        self.cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        result = self.cursor.fetchone()
+        return {'id': result[0], 'searching': result[1]} if result else None
 
-    def new_user(self, user_id: int):
-        self.users_db.insert([user_id, 0, 0])
+    def update_user(self, user_id: int, data: dict):
+        set_clause = ', '.join([f"{k} = ?" for k in data])
+        values = list(data.values()) + [user_id]
+        self.cursor.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+        self.conn.commit()
 
-    def search(self, user_id: int):
-        self.users_db.update({"rid": 0, "status": 1}, {"id": user_id})
-        result = self.users_db.select("*", {"status": 1}, True)
+    def find_rival(self, user_id: int) -> int:
+        # Ищем пользователя в поиске
+        self.cursor.execute('''SELECT id FROM users 
+                            WHERE searching = 1 AND id != ? 
+                            LIMIT 1''', (user_id,))
+        result = self.cursor.fetchone()
+        if result:
+            rival_id = result[0]
+            self.update_user(rival_id, {'searching': 0})
+            self.update_user(user_id, {'searching': 0})
+            return rival_id
+        return None
 
-        if not result:
-            return None
+    def create_chat(self, user1: int, user2: int):
+        self.cursor.execute("INSERT INTO chats (user1, user2) VALUES (?, ?)", (user1, user2))
+        self.conn.commit()
 
-        # Исключаем текущего пользователя из результатов
-        candidates = [row for row in result if row[0] != user_id]
-        if not candidates:
-            return None
+    def get_chat(self, user_id: int) -> dict:
+        self.cursor.execute('''SELECT * FROM chats 
+                            WHERE user1 = ? OR user2 = ?''', (user_id, user_id))
+        result = self.cursor.fetchone()
+        return {'id': result[0], 'user1': result[1], 'user2': result[2]} if result else None
 
-        rival = candidates[0]
-        return {
-            "id": rival[0],
-            "status": rival[1],
-            "rid": rival[2]
-        }
-
-    def start_chat(self, user_id: int, rival_id: int):
-        self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
-        self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
-
-    def stop_chat(self, user_id: int, rival_id: int):
-        self.users_db.update({"status": 0, "rid": 0}, {"id": user_id})
-        self.users_db.update({"status": 0, "rid": 0}, {"id": rival_id})
-
-    def stop_search(self, user_id: int):
-        self.users_db.update({"status": 0, "rid": 0}, {"id": user_id})
-
-    def save_message_link(self, user_id: int, message_id: int, rival_message_id: int):
-        self.messages_db.insert([user_id, message_id, rival_message_id])
-
-    def get_rival_message_id(self, user_id: int, message_id: int) -> int:
-        result = self.messages_db.select(
-            "rival_message_id", 
-            {"user_id": user_id, "message_id": message_id}, 
-            False
-        )
-        return result[0] if result else None
-
-    def close(self):
-        self.users_db.close()
-        self.messages_db.close()
+    def delete_chat(self, chat_id: int):
+        self.cursor.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+        self.conn.commit()
