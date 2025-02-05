@@ -12,13 +12,21 @@ from aiogram.types import (
     ReactionTypeEmoji
 )
 from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
+
+# Импорты из ваших модулей
 from database import database
 from keyboard import online
 
-# Получаем токен и URL из переменных окружения
-token = os.getenv("6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg")
-WEBHOOK_URL = os.getenv("https://api.render.com/deploy/srv-cuh1kl3tq21c73f5rsq0?key=DzisjLXeHzY")
+# Проверка обязательных переменных окружения
+if not (token := os.getenv("6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg")):
+    raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
 
+WEBHOOK_URL = os.getenv("https://api.render.com/deploy/srv-cuh1kl3tq21c73f5rsq0?key=DzisjLXeHzY", "https://anonchat-681i.onrender.com")
+PORT = int(os.getenv("PORT", 10000))  # Render использует порт 10000 по умолчанию
+
+# Инициализация бота и диспетчера
 bot = Bot(token)
 dp = Dispatcher()
 db = database("users.db")
@@ -187,6 +195,9 @@ async def handler_message(message: Message):
         except Exception as e:
             print(f"Ошибка при пересылке: {e}")
 
+async def on_startup(bot: Bot):
+    await bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+
 async def main():
     await bot.set_my_commands([
         BotCommand(command="/start", description="Начать поиск"),
@@ -195,11 +206,31 @@ async def main():
         BotCommand(command="/link", description="Поделиться профилем")
     ])
     
-    # Устанавливаем вебхук
-    await bot.set_webhook(WEBHOOK_URL)
+    # Настройка веб-приложения
+    app = web.Application()
+    app["bot"] = bot
     
-    # Запускаем polling для обработки обновлений
-    await dp.start_polling(bot)
+    # Регистрация обработчика вебхуков
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    )
+    webhook_requests_handler.register(app, path="/webhook")
+    
+    # Настройка приложения
+    setup_application(app, dp, bot=bot)
+    
+    # Установка вебхука при старте
+    await on_startup(bot)
+    
+    # Запуск сервера
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
+    await site.start()
+    
+    # Бесконечный цикл
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
