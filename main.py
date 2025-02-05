@@ -1,4 +1,5 @@
 import asyncio
+import os
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import (
@@ -14,7 +15,9 @@ from aiogram.enums import ChatMemberStatus, ChatType
 from database import database
 from keyboard import online
 
-token = "6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg"
+# Получаем токен и URL из переменных окружения
+token = os.getenv("6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg")
+WEBHOOK_URL = os.getenv("https://api.render.com/deploy/srv-cuh1kl3tq21c73f5rsq0?key=DzisjLXeHzY")
 
 bot = Bot(token)
 dp = Dispatcher()
@@ -162,7 +165,6 @@ async def handle_reaction(event: MessageReactionUpdated):
         except Exception as e:
             print(f"Ошибка обработки реакции: {e}")
 
-# Важное изменение: добавляем фильтр типа чата
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
     user = db.get_user_cursor(message.from_user.id)
@@ -192,6 +194,11 @@ async def main():
         BotCommand(command="/next", description="Новый собеседник"),
         BotCommand(command="/link", description="Поделиться профилем")
     ])
+    
+    # Устанавливаем вебхук
+    await bot.set_webhook(WEBHOOK_URL)
+    
+    # Запускаем polling для обработки обновлений
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
