@@ -1,56 +1,44 @@
 import sqlite3
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 
-class Database:
+class database:  # Используем оригинальное имя класса как в импорте
     def __init__(self, db_name: str = "users.db"):
         self.conn = sqlite3.connect(db_name, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row  # Для доступа к полям по имени
         self.cursor = self.conn.cursor()
         
-        # Создаем таблицы при инициализации
         self._create_tables()
 
     def _create_tables(self):
-        """Создает необходимые таблицы в базе данных"""
-        self.cursor.execute("""
+        """Создает таблицы в базе данных"""
+        self.cursor.executescript("""
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER UNIQUE NOT NULL,
+                user_id INTEGER PRIMARY KEY,
                 status INTEGER DEFAULT 0,
                 rid INTEGER DEFAULT 0
-            )
-        """)
-        
-        self.cursor.execute("""
+            );
+            
             CREATE TABLE IF NOT EXISTS message_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 message_id INTEGER NOT NULL,
                 rival_message_id INTEGER NOT NULL,
-                UNIQUE(user_id, message_id)
-            )
+                PRIMARY KEY(user_id, message_id)
+            );
         """)
         self.conn.commit()
 
-    def get_user(self, user_id: int) -> Optional[Dict]:
-        """Получает информацию о пользователе"""
+    def get_user_cursor(self, user_id: int) -> Optional[Dict]:
+        """Получает пользователя по ID (оригинальное имя метода)"""
         self.cursor.execute(
-            "SELECT user_id, status, rid FROM users WHERE user_id = ?",
+            "SELECT * FROM users WHERE user_id = ?",
             (user_id,)
         )
         result = self.cursor.fetchone()
-        if result:
-            return {
-                "user_id": result[0],
-                "status": result[1],
-                "rid": result[2]
-            }
-        return None
+        return dict(result) if result else None
 
     def get_users_in_search(self) -> int:
-        """Возвращает количество пользователей в поиске"""
-        self.cursor.execute(
-            "SELECT COUNT(*) FROM users WHERE status = 1"
-        )
+        """Количество пользователей в поиске"""
+        self.cursor.execute("SELECT COUNT(*) FROM users WHERE status = 1")
         return self.cursor.fetchone()[0]
 
     def new_user(self, user_id: int):
@@ -62,33 +50,23 @@ class Database:
             )
             self.conn.commit()
         except sqlite3.IntegrityError:
-            pass  # Пользователь уже существует
+            pass
 
     def search(self, user_id: int) -> Optional[Dict]:
-        """Начинает поиск собеседника и возвращает найденного"""
+        """Поиск собеседника"""
         # Обновляем статус текущего пользователя
         self.cursor.execute(
             "UPDATE users SET status = 1, rid = 0 WHERE user_id = ?",
             (user_id,)
         )
         
-        # Ищем кандидатов
+        # Ищем кандидата
         self.cursor.execute(
-            "SELECT user_id, status, rid FROM users "
-            "WHERE status = 1 AND user_id != ? "
-            "ORDER BY RANDOM() LIMIT 1",
+            "SELECT * FROM users WHERE status = 1 AND user_id != ? LIMIT 1",
             (user_id,)
         )
         rival = self.cursor.fetchone()
-        
-        if not rival:
-            return None
-        
-        return {
-            "user_id": rival[0],
-            "status": rival[1],
-            "rid": rival[2]
-        }
+        return dict(rival) if rival else None
 
     def start_chat(self, user_id: int, rival_id: int):
         """Начинает чат между двумя пользователями"""
@@ -103,7 +81,7 @@ class Database:
             )
 
     def stop_chat(self, user_id: int, rival_id: int):
-        """Завершает чат между пользователями"""
+        """Завершает чат"""
         with self.conn:
             self.cursor.execute(
                 "UPDATE users SET status = 0, rid = 0 WHERE user_id = ?",
@@ -115,7 +93,7 @@ class Database:
             )
 
     def stop_search(self, user_id: int):
-        """Останавливает поиск собеседника"""
+        """Останавливает поиск"""
         self.cursor.execute(
             "UPDATE users SET status = 0, rid = 0 WHERE user_id = ?",
             (user_id,)
@@ -123,16 +101,15 @@ class Database:
         self.conn.commit()
 
     def save_message_link(self, user_id: int, message_id: int, rival_message_id: int):
-        """Сохраняет связь между сообщениями"""
+        """Сохраняет связь сообщений"""
         self.cursor.execute(
-            "INSERT INTO message_links (user_id, message_id, rival_message_id) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO message_links VALUES (?, ?, ?)",
             (user_id, message_id, rival_message_id)
         )
         self.conn.commit()
 
     def get_rival_message_id(self, user_id: int, message_id: int) -> Optional[int]:
-        """Возвращает связанный ID сообщения"""
+        """Получает связанное сообщение"""
         self.cursor.execute(
             "SELECT rival_message_id FROM message_links "
             "WHERE user_id = ? AND message_id = ?",
@@ -142,5 +119,5 @@ class Database:
         return result[0] if result else None
 
     def close(self):
-        """Закрывает соединение с базой данных"""
+        """Закрывает соединение"""
         self.conn.close()
