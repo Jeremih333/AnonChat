@@ -20,10 +20,10 @@ from database import database
 from keyboard import online
 
 # Проверка обязательных переменных окружения
-if not (token := os.getenv("6753939702:AAFWaHJQrNSb48b2YCWnMXDUNmf_yn9IAvg")):
+if not (token := os.getenv("TELEGRAM_BOT_TOKEN")):
     raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
 
-WEBHOOK_URL = os.getenv("https://api.render.com/deploy/srv-cuh1kl3tq21c73f5rsq0?key=DzisjLXeHzY", "https://anonchat-681i.onrender.com")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-service-name.onrender.com")
 PORT = int(os.getenv("PORT", 10000))  # Render использует порт 10000 по умолчанию
 
 # Инициализация бота и диспетчера
