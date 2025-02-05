@@ -51,5 +51,3 @@ class database:
 
     def close(self):
         self.conn.close()
-
-Найти еще
