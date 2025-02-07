@@ -1,58 +1,33 @@
+import aiosqlite
 from datetime import datetime
-from sqsnip import database as db_lib
 
 class Database:
     def __init__(self, db_name: str):
-        self.users_db = db_lib(
-            db_name,
-            "users",
-            columns=[
-                "id INTEGER PRIMARY KEY",
-                "status INTEGER DEFAULT 0",
-                "rid INTEGER DEFAULT 0",
-                "gender TEXT",
-                "age INTEGER",
-                "vip INTEGER DEFAULT 0",
-                "referral_count INTEGER DEFAULT 0",
-                "referrer_id INTEGER",
-                "vip_expiry DATETIME"
-            ]
-        )
-        self._create_tables()
-        self._create_indexes()
+        self.db_name = db_name
+        asyncio.run(self._create_tables())
 
-    def _create_tables(self):
-        self.users_db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY,
-                status INTEGER DEFAULT 0,
-                rid INTEGER DEFAULT 0,
-                gender TEXT,
-                age INTEGER,
-                vip INTEGER DEFAULT 0,
-                referral_count INTEGER DEFAULT 0,
-                referrer_id INTEGER,
-                vip_expiry DATETIME
-            )
-        """)
+    async def _create_tables(self):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    status INTEGER DEFAULT 0,
+                    rid INTEGER DEFAULT 0,
+                    gender TEXT,
+                    age INTEGER,
+                    vip INTEGER DEFAULT 0,
+                    referral_count INTEGER DEFAULT 0,
+                    referrer_id INTEGER,
+                    vip_expiry DATETIME
+                )
+            """)
+            await db.commit()
 
-    def _create_indexes(self):
-        self.users_db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_status 
-            ON users(status)
-        """)
-        self.users_db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_vip 
-            ON users(vip, vip_expiry)
-        """)
-
-    def get_user_cursor(self, user_id: int) -> dict:
-        result = self.users_db.select(
-            columns="*",
-            conditions={"id": user_id},
-            fetch_all=False
-        )
-        return self._format_user(result) if result else None
+    async def get_user_cursor(self, user_id: int) -> dict:
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cursor:
+                result = await cursor.fetchone()
+                return self._format_user(result) if result else None
 
     def _format_user(self, result):
         return {
@@ -67,37 +42,32 @@ class Database:
             "vip_expiry": datetime.fromisoformat(result[8]) if result[8] else None
         }
 
-    def new_user(self, user_id: int):
-        self.users_db.insert([user_id, 0, 0, None, None, 0, 0, None, None])
+    async def new_user(self, user_id: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute("INSERT INTO users (id) VALUES (?)", (user_id,))
+            await db.commit()
 
-    def update_status(self, user_id: int, status: int):
-        self.users_db.update(
-            updates={"status": status},
-            conditions={"id": user_id}
-        )
+    async def update_status(self, user_id: int, status: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute("UPDATE users SET status = ? WHERE id = ?", (status, user_id))
+            await db.commit()
 
-    def search(self, user_id: int):
-        self.update_status(user_id, 1)
-        result = self.users_db.select(
-            columns="*",
-            conditions={"status": 1, "id": ("!=", user_id)},
-            fetch_all=True
-        )
-        return self._format_search_result(result)
+    async def search(self, user_id: int):
+        await self.update_status(user_id, 1)
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute("SELECT * FROM users WHERE status = 1 AND id != ?", (user_id,)) as cursor:
+                result = await cursor.fetchall()
+                return self._format_search_result(result)
 
-    def search_vip(self, user_id: int, gender: str):
-        result = self.users_db.select(
-            columns="*",
-            conditions={
-                "status": 1,
-                "id": ("!=", user_id),
-                "gender": gender
-            },
-            order_by="RANDOM()",
-            limit=1,
-            fetch_all=False
-        )
-        return self._format_search_result([result] if result else None)
+    async def search_vip(self, user_id: int, gender: str):
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.execute("""
+                SELECT * FROM users 
+                WHERE status = 1 AND id != ? AND gender = ?
+                ORDER BY RANDOM() LIMIT 1
+            """, (user_id, gender)) as cursor:
+                result = await cursor.fetchone()
+                return self._format_search_result([result] if result else None)
 
     def _format_search_result(self, result):
         if not result:
@@ -110,56 +80,65 @@ class Database:
             "age": result[0][4]
         }
 
-    def start_chat(self, user_id: int, rival_id: int):
-        with self.users_db.transaction():
-            self.users_db.update(
-                updates={"status": 2, "rid": rival_id},
-                conditions={"id": user_id}
-            )
-            self.users_db.update(
-                updates={"status": 2, "rid": user_id},
-                conditions={"id": rival_id}
-            )
+    async def start_chat(self, user_id: int, rival_id: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.transaction():
+                await db.execute(
+                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", (rival_id, user_id)
+                )
+                await db.execute(
+                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", (user_id, rival_id)
+                )
+                await db.commit()
 
-    def stop_chat(self, user_id: int, rival_id: int):
-        with self.users_db.transaction():
-            self.users_db.update(
-                updates={"status": 0, "rid": 0},
-                conditions={"id": user_id}
-            )
-            self.users_db.update(
-                updates={"status": 0, "rid": 0},
-                conditions={"id": rival_id}
-            )
+    async def stop_chat(self, user_id: int, rival_id: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            async with db.transaction():
+                await db.execute(
+                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", (user_id,)
+                )
+                await db.execute(
+                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", (rival_id,)
+                )
+                await db.commit()
 
-    def update_gender_age(self, user_id: int, gender: str = None, age: int = None):
-        updates = {}
+    async def update_gender_age(self, user_id: int, gender: str = None, age: int = None):
+        updates = []
+        params = []
         if gender:
-            updates["gender"] = gender
+            updates.append("gender = ?")
+            params.append(gender)
         if age is not None:
-            updates["age"] = age
-        self.users_db.update(updates, {"id": user_id})
+            updates.append("age = ?")
+            params.append(age)
+        params.append(user_id)
 
-    def increment_referral_count(self, user_id: int):
-        self.users_db.update(
-            updates={"referral_count": ("+", 1)},
-            conditions={"id": user_id}
-        )
+        if updates:
+            async with aiosqlite.connect(self.db_name) as db:
+                await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+                await db.commit()
 
-    def activate_vip(self, user_id: int, expiry_date: datetime):
-        self.users_db.update(
-            updates={
-                "vip": 1,
-                "vip_expiry": expiry_date.isoformat()
-            },
-            conditions={"id": user_id}
-        )
+    async def increment_referral_count(self, user_id: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?", (user_id,)
+            )
+            await db.commit()
 
-    def check_vip_status(self, user_id: int) -> bool:
-        user = self.get_user_cursor(user_id)
+    async def activate_vip(self, user_id: int, expiry_date: datetime):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                "UPDATE users SET vip = 1, vip_expiry = ? WHERE id = ?", 
+                (expiry_date.isoformat(), user_id)
+            )
+            await db.commit()
+
+    async def check_vip_status(self, user_id: int) -> bool:
+        user = await self.get_user_cursor(user_id)  # добавлено await
         if not user:
             return False
-        return user['vip'] and user['vip_expiry'] > datetime.now()
+        return user['vip'] and (user['vip_expiry'] is None or user['vip_expiry'] > datetime.now())
 
-    def close(self):
-        self.users_db.close()
+    async def close(self):
+        # Здесь не требуется, так как мы открываем соединение в каждом методе
+        pass
