@@ -5,7 +5,6 @@ from datetime import datetime
 class Database:
     def __init__(self, db_name: str):
         self.db_name = db_name
-        # Исправлено: безопасный запуск асинхронной задачи
         try:
             asyncio.get_event_loop().run_until_complete(self._create_tables())
         except RuntimeError:
@@ -18,12 +17,12 @@ class Database:
                     id INTEGER PRIMARY KEY,
                     status INTEGER DEFAULT 0,
                     rid INTEGER DEFAULT 0,
-                    gender TEXT,
-                    age INTEGER,
+                    gender TEXT DEFAULT '',
+                    age INTEGER DEFAULT 0,
                     vip INTEGER DEFAULT 0,
                     referral_count INTEGER DEFAULT 0,
-                    referrer_id INTEGER,
-                    vip_expiry DATETIME
+                    referrer_id INTEGER DEFAULT 0,
+                    vip_expiry DATETIME DEFAULT NULL
                 )
             """)
             await db.commit()
@@ -37,19 +36,23 @@ class Database:
     def _format_user(self, result):
         return {
             "id": result[0],
-            "status": result[1],
-            "rid": result[2],
-            "gender": result[3],
-            "age": result[4],
-            "vip": result[5],
-            "referral_count": result[6],
-            "referrer_id": result[7],
-            "vip_expiry": datetime.fromisoformat(result[8]) if result[8] else None
+            "status": result[1] if len(result) > 1 else 0,
+            "rid": result[2] if len(result) > 2 else 0,
+            "gender": result[3] if len(result) > 3 else '',
+            "age": result[4] if len(result) > 4 else 0,
+            "vip": result[5] if len(result) > 5 else 0,
+            "referral_count": result[6] if len(result) > 6 else 0,
+            "referrer_id": result[7] if len(result) > 7 else 0,
+            "vip_expiry": datetime.fromisoformat(result[8]) if len(result) > 8 and result[8] else None
         }
 
     async def new_user(self, user_id: int):
         async with aiosqlite.connect(self.db_name) as db:
-            await db.execute("INSERT OR IGNORE INTO users (id) VALUES (?)", (user_id,))
+            await db.execute("""
+                INSERT INTO users (id, gender, age) 
+                VALUES (?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+            """, (user_id, '', 0))
             await db.commit()
 
     async def update_status(self, user_id: int, status: int):
@@ -85,8 +88,8 @@ class Database:
             "id": result[0],
             "status": result[1],
             "rid": result[2],
-            "gender": result[3],
-            "age": result[4]
+            "gender": result[3] if len(result) > 3 else '',
+            "age": result[4] if len(result) > 4 else 0
         }
 
     async def start_chat(self, user_id: int, rival_id: int):
