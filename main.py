@@ -16,7 +16,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
 from database import Database
-from keyboard import online
 
 class Form(StatesGroup):
     gender = State()
@@ -33,6 +32,19 @@ dp = Dispatcher()
 db = Database("users.db")
 
 #region Utils
+def main_keyboard() -> InlineKeyboardMarkup:
+    """Основная клавиатура"""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔎 Найти чат", callback_data="search"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    ]])
+
+def cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура отмены"""
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")
+    ]])
+
 async def is_subscribed(user_id: int) -> bool:
     """Проверка подписки на канал"""
     try:
@@ -87,8 +99,9 @@ async def cmd_start(message: Message, state: FSMContext):
         if not user_data.gender or not user_data.age:
             await restart_registration(message, state)
         else:
-            await show_main_menu(message)
-            await state.clear()
+            # Автоматический старт поиска для существующих пользователей
+            await message.answer("♻️ Возобновляем поиск...")
+            await start_search(message)
 
 @dp.callback_query(F.data.startswith("gender_"), Form.gender)
 async def process_gender(cq: CallbackQuery, state: FSMContext):
@@ -109,64 +122,76 @@ async def process_age(message: Message, state: FSMContext):
     await state.clear()
     await show_main_menu(message)
 
-@dp.message(F.text == "🔎 Найти чат")
-async def search_dialog(message: Message, state: FSMContext):
-    """Поиск собеседника"""
-    user_id = message.from_user.id
+@dp.callback_query(F.data == "search")
+async def search_handler(cq: CallbackQuery):
+    """Обработка поиска"""
+    user_id = cq.from_user.id
     user_data = await db.get_user(user_id)
     
-    if not user_data:
-        return await message.answer("❌ Ошибка: пользователь не найден")
-    
-    if not user_data.gender or not user_data.age:
-        return await restart_registration(message, state)
-    
     if not await is_subscribed(user_id):
-        return await ask_for_subscription(message)
+        return await cq.message.answer(
+            "📢 Для использования бота необходимо подписаться на наш канал!",
+            reply_markup=subscribe_keyboard()
+        )
     
     if await db.check_vip_status(user_id):
-        await message.answer("⚙️ Выберите пол для поиска:", 
-                         reply_markup=build_gender_kb("vip_filter"))
-        await state.set_state(Form.vip_filter)
+        await cq.message.answer("⚙️ Выберите пол для поиска:", reply_markup=build_gender_kb("vip_filter"))
+        await cq.answer()
     else:
-        await start_search(message)
+        await start_search(cq.message)
 
 @dp.callback_query(F.data.startswith("vip_filter_"))
-async def vip_filter_handler(cq: CallbackQuery, state: FSMContext):
+async def vip_filter_handler(cq: CallbackQuery):
     """Обработка VIP фильтра"""
     gender = cq.data.split("_")[2]
     await cq.message.edit_text(f"🔎 Ищем {gender}...")
     await start_search(cq.message, gender)
-    await state.clear()
 
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription(cq: CallbackQuery):
     """Проверка подписки"""
     if await is_subscribed(cq.from_user.id):
         await cq.message.edit_text("✅ Подписка подтверждена!")
-        await search_dialog(cq.message, cq.message)
+        await search_handler(cq)
     else:
         await cq.answer("❌ Вы всё ещё не подписаны!", show_alert=True)
 
+@dp.callback_query(F.data == "cancel")
+async def cancel_handler(cq: CallbackQuery):
+    """Обработка отмены"""
+    user_data = await db.get_user(cq.from_user.id)
+    if user_data:
+        if user_data.status == 1:
+            await db.update_user(cq.from_user.id, status=0)
+            await cq.message.edit_text("❌ Поиск отменён")
+        elif user_data.status == 2:
+            await db.stop_chat(cq.from_user.id, user_data.rid)
+            await cq.message.edit_text("✅ Диалог завершён")
+    await cq.answer()
+
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
-    """Остановка диалога"""
+    """Остановка диалога/поиска"""
     user_data = await db.get_user(message.from_user.id)
-    if user_data and user_data.status == 2:
-        await db.stop_chat(message.from_user.id, user_data.rid)
-        await message.answer("✅ Диалог завершён", reply_markup=online.builder("🔎 Найти чат"))
-        await bot.send_message(user_data.rid, "⚠️ Собеседник покинул чат", reply_markup=online.builder("🔎 Найти чат"))
+    if user_data:
+        if user_data.status == 1:
+            await db.update_user(message.from_user.id, status=0)
+            await message.answer("❌ Поиск отменён", reply_markup=main_keyboard())
+        elif user_data.status == 2:
+            await db.stop_chat(message.from_user.id, user_data.rid)
+            await message.answer("✅ Диалог завершён", reply_markup=main_keyboard())
+            await bot.send_message(user_data.rid, "⚠️ Собеседник покинул чат", reply_markup=main_keyboard())
 
 @dp.message(Command("next"))
 async def cmd_next(message: Message):
-    """Поиск нового собеседника"""
+    """Новый собеседник"""
     user_data = await db.get_user(message.from_user.id)
     if user_data and user_data.status == 2:
         await db.stop_chat(message.from_user.id, user_data.rid)
-        await message.answer("✅ Диалог завершён, начинаем новый поиск...")
-        await search_dialog(message, message)
+        await message.answer("♻️ Ищем нового собеседника...")
+        await start_search(message)
     else:
-        await message.answer("❌ Вы не находитесь в активном диалоге")
+        await message.answer("❌ Вы не в диалоге")
 
 @dp.message(Command("referral"))
 async def cmd_referral(message: Message):
@@ -204,24 +229,21 @@ async def show_main_menu(message: Message):
     menu_text = "👋 Добро пожаловать!\n"
     if await db.check_vip_status(message.from_user.id):
         menu_text += "🌟 Ваш VIP статус активен!\n"
-    await message.answer(menu_text, reply_markup=online.builder("🔎 Найти чат"))
-
-async def ask_for_subscription(message: Message):
-    """Запрос подписки"""
-    await message.answer(
-        "📢 Для использования бота необходимо подписаться на наш канал!",
-        reply_markup=subscribe_keyboard()
-    )
+    await message.answer(menu_text, reply_markup=main_keyboard())
 
 async def start_search(message: Message, gender_filter: str = None):
     """Начало поиска"""
     user_id = message.from_user.id
     try:
+        user_data = await db.get_user(user_id)
+        if user_data.status == 2:
+            return await message.answer("⚠️ Вы уже в диалоге!")
+
         rival = await db.search_vip(user_id, gender_filter) if gender_filter else await db.search(user_id)
         
         if not rival:
-            await db.update_status(user_id, 1)
-            await message.answer("🔍 Ищем подходящего собеседника...", reply_markup=online.builder("❌ Отмена"))
+            await db.update_user(user_id, status=1)
+            await message.answer("🔍 Ищем подходящего собеседника...", reply_markup=cancel_keyboard())
         else:
             await db.start_chat(user_id, rival.id)
             info_text = "🎉 Собеседник найден!"
@@ -229,8 +251,8 @@ async def start_search(message: Message, gender_filter: str = None):
                 info_text += f"\n👤 Пол: {'👨 Мужской' if rival.gender == 'male' else '👩 Женский'}"
                 info_text += f"\n📆 Возраст: {rival.age}"
             
-            await message.answer(info_text, reply_markup=online.builder("❌ Завершить"))
-            await bot.send_message(rival.id, "🎉 Собеседник найден!", reply_markup=online.builder("❌ Завершить"))
+            await message.answer(info_text, reply_markup=cancel_keyboard())
+            await bot.send_message(rival.id, "🎉 Собеседник найден!", reply_markup=cancel_keyboard())
     except Exception as e:
         print(f"Ошибка поиска: {e}")
         await message.answer("⚠️ Произошла ошибка при поиске. Попробуйте снова.")
@@ -240,8 +262,8 @@ async def start_search(message: Message, gender_filter: str = None):
 async def setup_bot_commands():
     """Настройка команд бота"""
     commands = [
-        BotCommand(command="/start", description="Старт"),
-        BotCommand(command="/stop", description="Остановить диалог"),
+        BotCommand(command="/start", description="Старт/поиск"),
+        BotCommand(command="/stop", description="Остановить диалог/поиск"),
         BotCommand(command="/next", description="Новый собеседник"),
         BotCommand(command="/referral", description="Реферальная система"),
         BotCommand(command="/vip", description="VIP статус")
