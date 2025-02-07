@@ -21,7 +21,6 @@ class Database:
         asyncio.run(self._create_tables())
 
     async def _create_tables(self):
-        """Создание таблиц в базе данных"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -39,14 +38,12 @@ class Database:
             await db.commit()
 
     async def get_user(self, user_id: int) -> User:
-        """Получение пользователя по ID"""
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cursor:
                 row = await cursor.fetchone()
                 return User(*row) if row else None
 
     async def new_user(self, user_id: int):
-        """Создание нового пользователя"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute("""
                 INSERT INTO users (id) VALUES (?)
@@ -55,7 +52,6 @@ class Database:
             await db.commit()
 
     async def update_user(self, user_id: int, **kwargs):
-        """Обновление данных пользователя"""
         updates = []
         params = []
         for key, value in kwargs.items():
@@ -70,47 +66,52 @@ class Database:
             )
             await db.commit()
 
-    async def update_status(self, user_id: int, status: int):
-        """Обновление статуса пользователя"""
-        await self.update_user(user_id, status=status)
-
     async def search(self, user_id: int) -> User:
-        """Поиск обычного собеседника"""
         await self.update_user(user_id, status=1)
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute("""
                 SELECT * FROM users 
-                WHERE status = 1 AND id != ? 
+                WHERE status = 1 
+                AND id != ? 
                 ORDER BY RANDOM() LIMIT 1
             """, (user_id,)) as cursor:
                 row = await cursor.fetchone()
                 return User(*row) if row else None
 
     async def search_vip(self, user_id: int, gender: str) -> User:
-        """Поиск VIP собеседника"""
         async with aiosqlite.connect(self.db_name) as db:
             async with db.execute("""
                 SELECT * FROM users 
-                WHERE status = 1 AND id != ? AND gender = ?
+                WHERE status = 1 
+                AND id != ? 
+                AND gender = ?
+                AND vip = 1
+                AND vip_expiry > datetime('now')
                 ORDER BY RANDOM() LIMIT 1
             """, (user_id, gender)) as cursor:
                 row = await cursor.fetchone()
                 return User(*row) if row else None
 
-    async def start_chat(self, user_id: int, rival_id: int):
-        """Начало чата между пользователями"""
+    async def start_chat(self, user_id: int, rival_id: int) -> bool:
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute("BEGIN TRANSACTION")
             try:
+                user = await self.get_user(user_id)
+                rival = await self.get_user(rival_id)
+                
+                if user.status != 1 or rival.status != 1:
+                    return False
+                
                 await self.update_user(user_id, status=2, rid=rival_id)
                 await self.update_user(rival_id, status=2, rid=user_id)
                 await db.commit()
+                return True
             except Exception as e:
                 await db.rollback()
-                raise e
+                print(f"Ошибка начала чата: {e}")
+                return False
 
     async def stop_chat(self, user_id: int, rival_id: int):
-        """Завершение чата"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute("BEGIN TRANSACTION")
             try:
@@ -122,7 +123,6 @@ class Database:
                 raise e
 
     async def increment_referral_count(self, user_id: int):
-        """Увеличение счетчика рефералов"""
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
                 "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?", 
@@ -131,15 +131,13 @@ class Database:
             await db.commit()
 
     async def activate_vip(self, user_id: int, expiry_date: datetime):
-        """Активация VIP статуса"""
         await self.update_user(
             user_id, 
             vip=1, 
-            vip_expiry=expiry_date.isoformat()
+            vip_expiry=expiry_date.strftime("%Y-%m-%d %H:%M:%S")
         )
 
     async def check_vip_status(self, user_id: int) -> bool:
-        """Проверка VIP статуса"""
         user = await self.get_user(user_id)
         if not user or not user.vip:
             return False
@@ -151,7 +149,6 @@ class Database:
         return True
 
     async def deactivate_vip(self, user_id: int):
-        """Деактивация VIP статуса"""
         await self.update_user(
             user_id, 
             vip=0, 
