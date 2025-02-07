@@ -12,19 +12,34 @@ class Database:
 
     async def _create_tables(self):
         async with aiosqlite.connect(self.db_name) as db:
+            # Создаем основную таблицу
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
                     status INTEGER DEFAULT 0,
                     rid INTEGER DEFAULT 0,
-                    gender TEXT DEFAULT '',
-                    age INTEGER DEFAULT 0,
                     vip INTEGER DEFAULT 0,
                     referral_count INTEGER DEFAULT 0,
                     referrer_id INTEGER DEFAULT 0,
                     vip_expiry DATETIME DEFAULT NULL
                 )
             """)
+            
+            # Проверяем и добавляем новые столбцы
+            columns_to_add = [
+                ('gender', 'TEXT DEFAULT ""'),
+                ('age', 'INTEGER DEFAULT 0')
+            ]
+            
+            # Получаем информацию о существующих столбцах
+            async with db.execute("PRAGMA table_info(users)") as cursor:
+                existing_columns = [row[1] for row in await cursor.fetchall()]
+            
+            # Добавляем недостающие столбцы
+            for column, definition in columns_to_add:
+                if column not in existing_columns:
+                    await db.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+            
             await db.commit()
 
     async def get_user_cursor(self, user_id: int) -> dict:
@@ -38,21 +53,21 @@ class Database:
             "id": result[0],
             "status": result[1] if len(result) > 1 else 0,
             "rid": result[2] if len(result) > 2 else 0,
-            "gender": result[3] if len(result) > 3 else '',
-            "age": result[4] if len(result) > 4 else 0,
-            "vip": result[5] if len(result) > 5 else 0,
-            "referral_count": result[6] if len(result) > 6 else 0,
-            "referrer_id": result[7] if len(result) > 7 else 0,
-            "vip_expiry": datetime.fromisoformat(result[8]) if len(result) > 8 and result[8] else None
+            "vip": result[3] if len(result) > 3 else 0,
+            "referral_count": result[4] if len(result) > 4 else 0,
+            "referrer_id": result[5] if len(result) > 5 else 0,
+            "vip_expiry": datetime.fromisoformat(result[6]) if len(result) > 6 and result[6] else None,
+            "gender": result[7] if len(result) > 7 else '',
+            "age": result[8] if len(result) > 8 else 0
         }
 
     async def new_user(self, user_id: int):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute("""
-                INSERT INTO users (id, gender, age) 
-                VALUES (?, ?, ?)
+                INSERT INTO users (id) 
+                VALUES (?)
                 ON CONFLICT(id) DO NOTHING
-            """, (user_id, '', 0))
+            """, (user_id,))
             await db.commit()
 
     async def update_status(self, user_id: int, status: int):
@@ -88,8 +103,8 @@ class Database:
             "id": result[0],
             "status": result[1],
             "rid": result[2],
-            "gender": result[3] if len(result) > 3 else '',
-            "age": result[4] if len(result) > 4 else 0
+            "gender": result[7] if len(result) > 7 else '',
+            "age": result[8] if len(result) > 8 else 0
         }
 
     async def start_chat(self, user_id: int, rival_id: int):
