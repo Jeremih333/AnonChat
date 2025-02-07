@@ -66,20 +66,21 @@ async def cmd_start(message: Message, state: FSMContext):
                 expiry = datetime.now() + timedelta(days=30)
                 await db.activate_vip(int(referrer_id), expiry)
 
-    if not await db.get_user_cursor(user_id):
+    user_data = await db.get_user_cursor(user_id)
+    if not user_data:
         await db.new_user(user_id)
         await message.answer("👤 Выберите ваш пол:", reply_markup=build_gender_kb())
         await state.set_state(Form.gender)
     else:
-        user_data = await db.get_user_cursor(user_id)
         if not user_data.get("gender") or not user_data.get("age"):
             await restart_registration(message, state)
         else:
             await show_main_menu(message)
+            await state.clear()
 
 async def restart_registration(message: Message, state: FSMContext):
     await message.answer("❌ Завершите регистрацию!\n👤 Выберите ваш пол:", 
-                       reply_markup=build_gender_kb())
+                     reply_markup=build_gender_kb())
     await state.set_state(Form.gender)
 
 @dp.callback_query(F.data.startswith("gender_"), Form.gender)
@@ -117,22 +118,23 @@ async def search_dialog(message: Message, state: FSMContext):
         return await restart_registration(message, state)
     
     if not await is_subscribed(user_id):
-        return await ask_for_subscription(message)
+        return await ask_for_subscription(message, state)
     
     if await db.check_vip_status(user_id):
         await message.answer("⚙️ Выберите пол для поиска:", 
-                           reply_markup=build_gender_kb("vip_filter"))
+                         reply_markup=build_gender_kb("vip_filter"))
         await state.set_state(Form.vip_filter)
     else:
         await start_search(message)
 
-async def ask_for_subscription(message: Message):
+async def ask_for_subscription(message: Message, state: FSMContext):
     subscribe_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подписаться", url="https://t.me/freedom346")],
         [InlineKeyboardButton(text="🔄 Проверить подписку", callback_data="check_sub")]
     ])
     await message.answer("📢 Для использования бота необходимо подписаться на наш канал!",
-                       reply_markup=subscribe_kb)
+                      reply_markup=subscribe_kb)
+    await state.set_state(None)
 
 async def start_search(message: Message, gender_filter: str = None):
     user_id = message.from_user.id
@@ -142,7 +144,7 @@ async def start_search(message: Message, gender_filter: str = None):
         if not rival:
             await db.update_status(user_id, 1)
             await message.answer("🔍 Ищем подходящего собеседника...", 
-                               reply_markup=online.builder("❌ Отмена"))
+                              reply_markup=online.builder("❌ Отмена"))
         else:
             await db.start_chat(user_id, rival["id"])
             info_text = "🎉 Собеседник найден!"
@@ -152,22 +154,23 @@ async def start_search(message: Message, gender_filter: str = None):
             
             await message.answer(info_text, reply_markup=online.builder("❌ Завершить"))
             await bot.send_message(rival["id"], "🎉 Собеседник найден!", 
-                                  reply_markup=online.builder("❌ Завершить"))
+                                 reply_markup=online.builder("❌ Завершить"))
     except Exception as e:
         print(f"Ошибка поиска: {e}")
         await message.answer("⚠️ Произошла ошибка при поиске. Попробуйте снова.")
 
 @dp.callback_query(F.data.startswith("vip_filter_"))
-async def vip_filter_handler(cq: CallbackQuery):
+async def vip_filter_handler(cq: CallbackQuery, state: FSMContext):
     gender = cq.data.split("_")[2]
     await cq.message.edit_text(f"🔎 Ищем {gender}...")
     await start_search(cq.message, gender)
+    await state.clear()
 
 @dp.callback_query(F.data == "check_sub")
-async def check_subscription(cq: CallbackQuery):
+async def check_subscription(cq: CallbackQuery, state: FSMContext):
     if await is_subscribed(cq.from_user.id):
         await cq.message.edit_text("✅ Подписка подтверждена!")
-        await search_dialog(cq.message, FSMContext)
+        await search_dialog(cq.message, state)
     else:
         await cq.answer("❌ Вы всё ещё не подписаны!", show_alert=True)
 
@@ -178,18 +181,18 @@ async def cmd_stop(message: Message):
         rival_id = user_data["rid"]
         await db.stop_chat(message.from_user.id, rival_id)
         await message.answer("✅ Диалог завершён", 
-                           reply_markup=online.builder("🔎 Найти чат"))
+                          reply_markup=online.builder("🔎 Найти чат"))
         await bot.send_message(rival_id, "⚠️ Собеседник покинул чат", 
-                             reply_markup=online.builder("🔎 Найти чат"))
+                            reply_markup=online.builder("🔎 Найти чат"))
 
 @dp.message(Command("next"))
-async def cmd_next(message: Message):
+async def cmd_next(message: Message, state: FSMContext):
     user_data = await db.get_user_cursor(message.from_user.id)
     if user_data and user_data["status"] == 2:
         rival_id = user_data["rid"]
         await db.stop_chat(message.from_user.id, rival_id)
         await message.answer("✅ Диалог завершён, начинаем новый поиск...")
-        await search_dialog(message)
+        await search_dialog(message, state)
     else:
         await message.answer("❌ Вы не находитесь в активном диалоге")
 
