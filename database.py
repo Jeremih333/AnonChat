@@ -1,11 +1,15 @@
-import asyncio  # Добавлен импорт модуля
+import asyncio
 import aiosqlite
 from datetime import datetime
 
 class Database:
     def __init__(self, db_name: str):
         self.db_name = db_name
-        asyncio.run(self._create_tables())
+        # Исправлено: безопасный запуск асинхронной задачи
+        try:
+            asyncio.get_event_loop().run_until_complete(self._create_tables())
+        except RuntimeError:
+            asyncio.new_event_loop().run_until_complete(self._create_tables())
 
     async def _create_tables(self):
         async with aiosqlite.connect(self.db_name) as db:
@@ -45,7 +49,7 @@ class Database:
 
     async def new_user(self, user_id: int):
         async with aiosqlite.connect(self.db_name) as db:
-            await db.execute("INSERT INTO users (id) VALUES (?)", (user_id,))
+            await db.execute("INSERT OR IGNORE INTO users (id) VALUES (?)", (user_id,))
             await db.commit()
 
     async def update_status(self, user_id: int, status: int):
@@ -56,8 +60,12 @@ class Database:
     async def search(self, user_id: int):
         await self.update_status(user_id, 1)
         async with aiosqlite.connect(self.db_name) as db:
-            async with db.execute("SELECT * FROM users WHERE status = 1 AND id != ?", (user_id,)) as cursor:
-                result = await cursor.fetchall()
+            async with db.execute("""
+                SELECT * FROM users 
+                WHERE status = 1 AND id != ? 
+                ORDER BY RANDOM() LIMIT 1
+            """, (user_id,)) as cursor:
+                result = await cursor.fetchone()
                 return self._format_search_result(result)
 
     async def search_vip(self, user_id: int, gender: str):
@@ -68,40 +76,52 @@ class Database:
                 ORDER BY RANDOM() LIMIT 1
             """, (user_id, gender)) as cursor:
                 result = await cursor.fetchone()
-                return self._format_search_result([result] if result else None)
+                return self._format_search_result(result)
 
     def _format_search_result(self, result):
-        if not result or not result[0]:
+        if not result:
             return None
         return {
-            "id": result[0][0],
-            "status": result[0][1],
-            "rid": result[0][2],
-            "gender": result[0][3],
-            "age": result[0][4]
+            "id": result[0],
+            "status": result[1],
+            "rid": result[2],
+            "gender": result[3],
+            "age": result[4]
         }
 
     async def start_chat(self, user_id: int, rival_id: int):
         async with aiosqlite.connect(self.db_name) as db:
-            async with db.transaction():
+            await db.execute("BEGIN TRANSACTION")
+            try:
                 await db.execute(
-                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", (rival_id, user_id)
+                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", 
+                    (rival_id, user_id)
                 )
                 await db.execute(
-                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", (user_id, rival_id)
+                    "UPDATE users SET status = 2, rid = ? WHERE id = ?", 
+                    (user_id, rival_id)
                 )
                 await db.commit()
+            except Exception as e:
+                await db.rollback()
+                raise e
 
     async def stop_chat(self, user_id: int, rival_id: int):
         async with aiosqlite.connect(self.db_name) as db:
-            async with db.transaction():
+            await db.execute("BEGIN TRANSACTION")
+            try:
                 await db.execute(
-                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", (user_id,)
+                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", 
+                    (user_id,)
                 )
                 await db.execute(
-                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", (rival_id,)
+                    "UPDATE users SET status = 0, rid = 0 WHERE id = ?", 
+                    (rival_id,)
                 )
                 await db.commit()
+            except Exception as e:
+                await db.rollback()
+                raise e
 
     async def update_gender_age(self, user_id: int, gender: str = None, age: int = None):
         updates = []
@@ -116,13 +136,17 @@ class Database:
 
         if updates:
             async with aiosqlite.connect(self.db_name) as db:
-                await db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+                await db.execute(
+                    f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
+                    params
+                )
                 await db.commit()
 
     async def increment_referral_count(self, user_id: int):
         async with aiosqlite.connect(self.db_name) as db:
             await db.execute(
-                "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?", (user_id,)
+                "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?", 
+                (user_id,)
             )
             await db.commit()
 
@@ -138,7 +162,15 @@ class Database:
         user = await self.get_user_cursor(user_id)
         if not user:
             return False
-        return user['vip'] and (user['vip_expiry'] is None or user['vip_expiry'] > datetime.now())
+        if user['vip_expiry'] and datetime.now() > user['vip_expiry']:
+            await self.deactivate_vip(user_id)
+            return False
+        return user['vip'] == 1
 
-    async def close(self):
-        pass
+    async def deactivate_vip(self, user_id: int):
+        async with aiosqlite.connect(self.db_name) as db:
+            await db.execute(
+                "UPDATE users SET vip = 0, vip_expiry = NULL WHERE id = ?",
+                (user_id,)
+            )
+            await db.commit()
