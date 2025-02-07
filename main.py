@@ -106,7 +106,7 @@ async def show_main_menu(message: Message):
     await message.answer(menu_text, reply_markup=online.builder("🔎 Найти чат"))
 
 @dp.message(F.text == "🔎 Найти чат")
-async def search_dialog(message: Message):
+async def search_dialog(message: Message, state: FSMContext):
     user_id = message.from_user.id
     user_data = await db.get_user_cursor(user_id)
     
@@ -114,7 +114,7 @@ async def search_dialog(message: Message):
         return await message.answer("❌ Ошибка: пользователь не найден")
     
     if not user_data.get("gender") or not user_data.get("age"):
-        return await restart_registration(message, FSMContext)
+        return await restart_registration(message, state)
     
     if not await is_subscribed(user_id):
         return await ask_for_subscription(message)
@@ -122,7 +122,7 @@ async def search_dialog(message: Message):
     if await db.check_vip_status(user_id):
         await message.answer("⚙️ Выберите пол для поиска:", 
                            reply_markup=build_gender_kb("vip_filter"))
-        await Form.vip_filter.set()
+        await state.set_state(Form.vip_filter)
     else:
         await start_search(message)
 
@@ -167,7 +167,7 @@ async def vip_filter_handler(cq: CallbackQuery):
 async def check_subscription(cq: CallbackQuery):
     if await is_subscribed(cq.from_user.id):
         await cq.message.edit_text("✅ Подписка подтверждена!")
-        await search_dialog(cq.message)
+        await search_dialog(cq.message, FSMContext)
     else:
         await cq.answer("❌ Вы всё ещё не подписаны!", show_alert=True)
 
