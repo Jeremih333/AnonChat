@@ -2,7 +2,7 @@ import sqlite3
 from datetime import datetime
 from sqsnip import database as db
 
-class database:
+class Database:
     def __init__(self, db_name: str):
         self.users_db = db(
             db_name, 
@@ -22,11 +22,12 @@ class database:
         self._create_indexes()
 
     def _create_indexes(self):
-        self.users_db.conn.execute("""
+        # Создание индексов для быстрого поиска
+        self.users_db.execute("""
             CREATE INDEX IF NOT EXISTS idx_status 
             ON users(status)
         """)
-        self.users_db.conn.execute("""
+        self.users_db.execute("""
             CREATE INDEX IF NOT EXISTS idx_vip 
             ON users(vip, vip_expiry)
         """)
@@ -100,11 +101,10 @@ class database:
         self.users_db.update(updates, {"id": user_id})
 
     def increment_referral_count(self, user_id: int):
-        with self.users_db.conn:
-            self.users_db.execute(
-                "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?",
-                (user_id,)
-            )
+        self.users_db.execute(
+            "UPDATE users SET referral_count = referral_count + 1 WHERE id = ?",
+            (user_id,)
+        )
 
     def activate_vip(self, user_id: int, expiry_date: datetime):
         self.users_db.update(
