@@ -72,7 +72,7 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer("👤 Выберите ваш пол:", reply_markup=build_gender_kb())
         await state.set_state(Form.gender)
     else:
-        if not user_data.get("gender") or not user_data.get("age"):
+        if user_data.get("gender") in ['', None] or user_data.get("age") in [0, None]:
             await restart_registration(message, state)
         else:
             await show_main_menu(message)
@@ -114,7 +114,7 @@ async def search_dialog(message: Message, state: FSMContext):
     if not user_data:
         return await message.answer("❌ Ошибка: пользователь не найден")
     
-    if not user_data.get("gender") or not user_data.get("age"):
+    if user_data.get("gender") in ['', None] or user_data.get("age") in [0, None]:
         return await restart_registration(message, state)
     
     if not await is_subscribed(user_id):
