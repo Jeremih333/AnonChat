@@ -15,7 +15,6 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
-
 from database import Database  # Исправлен импорт
 from keyboard import online
 
@@ -67,18 +66,18 @@ async def cmd_start(message: Message, state: FSMContext):
     if len(args) > 1 and args[1].startswith('ref'):
         referrer_id = args[1][3:]
         if referrer_id.isdigit() and int(referrer_id) != user_id:
-            db.increment_referral_count(int(referrer_id))
-            if db.get_user_cursor(int(referrer_id))["referral_count"] >= 5:
+            await db.increment_referral_count(int(referrer_id))  # добавлено await
+            if (await db.get_user_cursor(int(referrer_id)))["referral_count"] >= 5:  # добавлено await
                 expiry = datetime.now() + timedelta(days=30)
-                db.activate_vip(int(referrer_id), expiry)
+                await db.activate_vip(int(referrer_id), expiry)  # добавлено await
 
     # Проверка существования пользователя
-    if not db.get_user_cursor(user_id):
-        db.new_user(user_id)
+    if not await db.get_user_cursor(user_id):  # добавлено await
+        await db.new_user(user_id)  # добавлено await
         await message.answer("👤 Выберите ваш пол:", reply_markup=build_gender_kb())
         await state.set_state(Form.gender)
     else:
-        user_data = db.get_user_cursor(user_id)
+        user_data = await db.get_user_cursor(user_id)  # добавлено await
         if not user_data.get("gender") or not user_data.get("age"):
             await restart_registration(message, state)
         else:
@@ -94,7 +93,7 @@ async def restart_registration(message: Message, state: FSMContext):
 async def process_gender(cq: CallbackQuery, state: FSMContext):
     """Обработка выбора пола"""
     gender = cq.data.split("_")[1]
-    db.update_gender_age(cq.from_user.id, gender=gender)
+    await db.update_gender_age(cq.from_user.id, gender=gender)  # добавлено await
     await cq.message.edit_text(f"✅ Пол: {'👨 Мужской' if gender == 'male' else '👩 Женский'}")
     await cq.message.answer("📅 Введите ваш возраст (13-100):")
     await state.set_state(Form.age)
@@ -105,7 +104,7 @@ async def process_age(message: Message, state: FSMContext):
     if not message.text.isdigit() or not (13 <= int(message.text) <= 100):
         return await message.answer("❌ Некорректный возраст! Введите число от 13 до 100:")
     
-    db.update_gender_age(message.from_user.id, age=int(message.text))
+    await db.update_gender_age(message.from_user.id, age=int(message.text))  # добавлено await
     await state.clear()
     await show_main_menu(message)
     await message.answer("✅ Регистрация завершена!")
@@ -113,7 +112,7 @@ async def process_age(message: Message, state: FSMContext):
 async def show_main_menu(message: Message):
     """Отображение главного меню"""
     menu_text = "👋 Добро пожаловать!\n"
-    if db.check_vip_status(message.from_user.id):
+    if await db.check_vip_status(message.from_user.id):  # добавлено await
         menu_text += "🌟 Ваш VIP статус активен!\n"
     await message.answer(menu_text, reply_markup=online.builder("🔎 Найти чат"))
 
@@ -121,7 +120,7 @@ async def show_main_menu(message: Message):
 async def search_dialog(message: Message):
     """Инициализация поиска собеседника"""
     user_id = message.from_user.id
-    user_data = db.get_user_cursor(user_id)
+    user_data = await db.get_user_cursor(user_id)  # добавлено await
     
     if not user_data.get("gender") or not user_data.get("age"):
         return await restart_registration(message, FSMContext)
@@ -129,7 +128,7 @@ async def search_dialog(message: Message):
     if not await is_subscribed(user_id):
         return await ask_for_subscription(message)
     
-    if db.check_vip_status(user_id):
+    if await db.check_vip_status(user_id):  # добавлено await
         await message.answer("⚙️ Выберите пол для поиска:", 
                            reply_markup=build_gender_kb("vip_filter"))
         await Form.vip_filter.set()
@@ -148,16 +147,16 @@ async def ask_for_subscription(message: Message):
 async def start_search(message: Message, gender_filter: str = None):
     """Логика поиска собеседника"""
     user_id = message.from_user.id
-    rival = db.search_vip(user_id, gender_filter) if gender_filter else db.search(user_id)
+    rival = await db.search_vip(user_id, gender_filter) if gender_filter else await db.search(user_id)  # добавлено await
     
     if not rival:
-        db.update_status(user_id, 1)
+        await db.update_status(user_id, 1)  # добавлено await
         await message.answer("🔍 Ищем подходящего собеседника...", 
                            reply_markup=online.builder("❌ Отмена"))
     else:
-        db.start_chat(user_id, rival["id"])
+        await db.start_chat(user_id, rival["id"])  # добавлено await
         info_text = "🎉 Собеседник найден!"
-        if db.check_vip_status(user_id):
+        if await db.check_vip_status(user_id):  # добавлено await
             info_text += f"\n👤 Пол: {'👨 Мужской' if rival['gender'] == 'male' else '👩 Женский'}"
             info_text += f"\n📆 Возраст: {rival['age']}"
         
@@ -184,10 +183,10 @@ async def check_subscription(cq: CallbackQuery):
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
     """Остановка активного диалога"""
-    user_data = db.get_user_cursor(message.from_user.id)
+    user_data = await db.get_user_cursor(message.from_user.id)  # добавлено await
     if user_data and user_data["status"] == 2:
         rival_id = user_data["rid"]
-        db.stop_chat(message.from_user.id, rival_id)
+        await db.stop_chat(message.from_user.id, rival_id)  # добавлено await
         await message.answer("✅ Диалог завершён", 
                            reply_markup=online.builder("🔎 Найти чат"))
         await bot.send_message(rival_id, "⚠️ Собеседник покинул чат", 
