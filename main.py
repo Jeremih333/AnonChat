@@ -7,10 +7,10 @@ from aiogram.types import (
     Message, 
     CallbackQuery, 
     InlineKeyboardButton, 
-    InlineKeyboardMarkup,
+    InlineKeyboardMarkup, 
     BotCommand
 )
-from aiogram.enums import ChatMemberStatus
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -175,7 +175,7 @@ async def cmd_stop(message: Message):
         else:
             await message.answer("ℹ️ Нет активных действий для остановки")
 
-@dp.message(F.chat.type == "private")
+@dp.message(F.chat.type == ChatType.PRIVATE)
 async def handle_private_messages(message: Message):
     user = await db.get_user(message.from_user.id)
     if user and user.status == 2:
