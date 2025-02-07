@@ -85,14 +85,14 @@ class Database:
         } if result else None
 
     def start_chat(self, user_id: int, rival_id: int):
-        with self.users_db.conn:
-            self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
-            self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
+        # Используем методы библиотеки для обновления статусов
+        self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
+        self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
 
     def stop_chat(self, user_id: int, rival_id: int):
-        with self.users_db.conn:
-            self.users_db.update({"status": 0, "rid": 0}, {"id": user_id})
-            self.users_db.update({"status": 0, "rid": 0}, {"id": rival_id})
+        # Используем методы библиотеки для обновления статусов
+        self.users_db.update({"status": 0, "rid": 0}, {"id": user_id})
+        self.users_db.update({"status": 0, "rid": 0}, {"id": rival_id})
 
     def update_gender_age(self, user_id: int, gender: str = None, age: int = None):
         updates = {}
