@@ -1,3 +1,4 @@
+import asyncio  # Добавлен импорт модуля
 import aiosqlite
 from datetime import datetime
 
@@ -70,7 +71,7 @@ class Database:
                 return self._format_search_result([result] if result else None)
 
     def _format_search_result(self, result):
-        if not result:
+        if not result or not result[0]:
             return None
         return {
             "id": result[0][0],
@@ -134,11 +135,10 @@ class Database:
             await db.commit()
 
     async def check_vip_status(self, user_id: int) -> bool:
-        user = await self.get_user_cursor(user_id)  # добавлено await
+        user = await self.get_user_cursor(user_id)
         if not user:
             return False
         return user['vip'] and (user['vip_expiry'] is None or user['vip_expiry'] > datetime.now())
 
     async def close(self):
-        # Здесь не требуется, так как мы открываем соединение в каждом методе
         pass
