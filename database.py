@@ -16,6 +16,8 @@ class Database:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY,
+                    gender TEXT DEFAULT '',
+                    age INTEGER DEFAULT 0,
                     status INTEGER DEFAULT 0,
                     rid INTEGER DEFAULT 0,
                     vip INTEGER DEFAULT 0,
@@ -24,22 +26,6 @@ class Database:
                     vip_expiry DATETIME DEFAULT NULL
                 )
             """)
-            
-            # Проверяем и добавляем новые столбцы
-            columns_to_add = [
-                ('gender', 'TEXT DEFAULT ""'),
-                ('age', 'INTEGER DEFAULT 0')
-            ]
-            
-            # Получаем информацию о существующих столбцах
-            async with db.execute("PRAGMA table_info(users)") as cursor:
-                existing_columns = [row[1] for row in await cursor.fetchall()]
-            
-            # Добавляем недостающие столбцы
-            for column, definition in columns_to_add:
-                if column not in existing_columns:
-                    await db.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
-            
             await db.commit()
 
     async def get_user_cursor(self, user_id: int) -> dict:
@@ -51,14 +37,14 @@ class Database:
     def _format_user(self, result):
         return {
             "id": result[0],
-            "status": result[1] if len(result) > 1 else 0,
-            "rid": result[2] if len(result) > 2 else 0,
-            "vip": result[3] if len(result) > 3 else 0,
-            "referral_count": result[4] if len(result) > 4 else 0,
-            "referrer_id": result[5] if len(result) > 5 else 0,
-            "vip_expiry": datetime.fromisoformat(result[6]) if len(result) > 6 and result[6] else None,
-            "gender": result[7] if len(result) > 7 else '',
-            "age": result[8] if len(result) > 8 else 0
+            "gender": result[1],
+            "age": result[2],
+            "status": result[3] if len(result) > 3 else 0,
+            "rid": result[4] if len(result) > 4 else 0,
+            "vip": result[5] if len(result) > 5 else 0,
+            "referral_count": result[6] if len(result) > 6 else 0,
+            "referrer_id": result[7] if len(result) > 7 else 0,
+            "vip_expiry": datetime.fromisoformat(result[8]) if len(result) > 8 and result[8] else None,
         }
 
     async def new_user(self, user_id: int):
