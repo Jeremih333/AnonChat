@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sqlite3
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import (
@@ -36,7 +37,16 @@ async def is_subscribed(user_id: int) -> bool:
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    try:
+        user = db.get_user_cursor(message.from_user.id)
+    except sqlite3.OperationalError as e:
+        if "no such column" in str(e):
+            db._create_tables()
+            db._migrate_database()
+            user = None
+        else:
+            raise
+    
     if not user:
         db.new_user(message.from_user.id)
         await message.answer(
@@ -216,14 +226,15 @@ async def handle_reaction(event: MessageReactionUpdated):
                 message_id=original_msg_id,
                 reaction=reaction
             )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Ошибка обработки реакции: {e}")
 
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         try:
+            sent_msg = None
             if message.photo:
                 sent_msg = await bot.send_photo(user["rid"], message.photo[-1].file_id, caption=message.caption)
             elif message.text:
@@ -235,11 +246,12 @@ async def handler_message(message: Message):
             elif message.sticker:
                 sent_msg = await bot.send_sticker(user["rid"], message.sticker.file_id)
 
-            db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
-            db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
+            if sent_msg:
+                db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
+                db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Ошибка пересылки сообщения: {e}")
 
 async def on_startup(bot: Bot):
     await bot.set_webhook(f"{WEBHOOK_URL}/webhook")
