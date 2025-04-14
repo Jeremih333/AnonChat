@@ -12,7 +12,7 @@ from aiogram.types import (
     MessageReactionUpdated,
     ReactionTypeEmoji
 )
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -57,6 +57,10 @@ async def start_command(message: Message):
     else:
         await search_chat(message)
 
+@dp.message(Command("search"))
+async def search_command(message: Message):
+    await search_chat(message)
+
 @dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
 async def block_links(message: Message):
     await message.delete()
@@ -91,10 +95,10 @@ async def search_chat(message: Message):
                 "/next — искать нового собеседника\n"
                 "/stop — закончить диалог\n"
                 "/interests — добавить интересы поиска\n\n"
-                "`https://t.me/Anonchatyooubot`"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>"
             )
-            await message.answer(text, reply_markup=online.builder("❌ Завершить диалог"))
-            await bot.send_message(rival["id"], text, reply_markup=online.builder("❌ Завершить диалог"))
+            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
+            await bot.send_message(rival["id"], text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
 
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription(callback: CallbackQuery):
@@ -118,16 +122,15 @@ async def stop_command(message: Message):
         ])
         
         await message.answer(
-            "Диалог завершен. Ищем нового собеседника...\n"
-            "Оставьте мнение о собеседнике:",
+            "Диалог завершен.\nОставьте мнение о собеседнике:",
             reply_markup=feedback_markup
         )
         
         await bot.send_message(
             rival_id,
             "Собеседник закончил диалог 😞\n"
-            "Напишите /search для нового поиска\n\n"
-            "`https://t.me/Anonchatyooubot`"
+            f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+            parse_mode=ParseMode.HTML
         )
 
 @dp.message(Command("interests"))
@@ -165,7 +168,28 @@ async def reset_interests(callback: CallbackQuery):
 
 @dp.message(Command("next"))
 async def next_command(message: Message):
-    await stop_command(message)
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 2:
+        rival_id = user["rid"]
+        db.stop_chat(message.from_user.id, rival_id)
+        
+        feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👍", callback_data="rate_good"),
+             InlineKeyboardButton(text="👎", callback_data="rate_bad")],
+            [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
+        ])
+        
+        await message.answer(
+            "Ищем нового собеседника...\nОставьте мнение о предыдущем собеседнике:",
+            reply_markup=feedback_markup
+        )
+        
+        await bot.send_message(
+            rival_id,
+            "Собеседник начал новый поиск 🔄\n"
+            f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+            parse_mode=ParseMode.HTML
+        )
     await search_chat(message)
 
 @dp.message(Command("link"))
@@ -261,6 +285,7 @@ async def main():
         BotCommand(command="/start", description="Начать поиск"),
         BotCommand(command="/stop", description="Закончить диалог"),
         BotCommand(command="/next", description="Новый собеседник"),
+        BotCommand(command="/search", description="Начать поиск"),
         BotCommand(command="/link", description="Поделиться профилем"),
         BotCommand(command="/interests", description="Настроить интересы")
     ])
