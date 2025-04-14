@@ -91,7 +91,7 @@ async def search_chat(message: Message):
                 "/next — искать нового собеседника\n"
                 "/stop — закончить диалог\n"
                 "/interests — добавить интересы поиска\n\n"
-                "https://t.me/Anonchatyooubot"
+                "`https://t.me/Anonchatyooubot`"
             )
             await message.answer(text, reply_markup=online.builder("❌ Завершить диалог"))
             await bot.send_message(rival["id"], text, reply_markup=online.builder("❌ Завершить диалог"))
@@ -113,8 +113,8 @@ async def stop_command(message: Message):
         
         feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👍", callback_data="rate_good"),
-             InlineKeyboardButton(text="👎", callback_data="rate_bad"),
-             InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
+             InlineKeyboardButton(text="👎", callback_data="rate_bad")],
+            [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
         await message.answer(
@@ -127,7 +127,7 @@ async def stop_command(message: Message):
             rival_id,
             "Собеседник закончил диалог 😞\n"
             "Напишите /search для нового поиска\n\n"
-            "https://t.me/Anonchatyooubot"
+            "`https://t.me/Anonchatyooubot`"
         )
 
 @dp.message(Command("interests"))
