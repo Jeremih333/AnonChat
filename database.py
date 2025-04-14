@@ -29,11 +29,14 @@ class database:
 
     def get_user_cursor(self, user_id: int) -> dict:
         result = self.users_db.select("*", {"id": user_id}, False)
+        if not result:
+            return None
         return {
+            "id": result[0],
             "status": result[1],
             "rid": result[2],
             "interests": result[3]
-        } if result else None
+        }
 
     def get_users_in_search(self) -> int:
         result = self.users_db.select("*", {"status": 1}, True)
@@ -43,23 +46,47 @@ class database:
         self.users_db.insert([user_id, 0, 0, ''])
 
     def search(self, user_id: int):
-        self.users_db.update({"rid": 0, "status": 1}, {"id": user_id})
-        result = self.users_db.select("*", {"status": 1}, True)
-
-        if not result:
+        current_user = self.get_user_cursor(user_id)
+        if not current_user:
             return None
 
-        candidates = [row for row in result if row[0] != user_id]
+        self.users_db.update({"rid": 0, "status": 1}, {"id": user_id})
+        
+        # Получаем интересы текущего пользователя
+        user_interests = set(current_user['interests'].split(',')) if current_user['interests'] else set()
+        
+        # Ищем кандидатов с совпадающими интересами
+        all_candidates = self.users_db.select("*", {"status": 1}, True)
+        if not all_candidates:
+            return None
+
+        candidates = []
+        for candidate in all_candidates:
+            if candidate[0] == user_id:
+                continue
+            
+            # Получаем интересы кандидата
+            candidate_interests = set(candidate[3].split(',')) if candidate[3] else set()
+            
+            # Если есть пересечение интересов или интересы не указаны
+            if not user_interests or user_interests & candidate_interests:
+                candidates.append({
+                    "id": candidate[0],
+                    "status": candidate[1],
+                    "rid": candidate[2],
+                    "interests": candidate[3]
+                })
+
         if not candidates:
             return None
 
-        rival = candidates[0]
-        return {
-            "id": rival[0],
-            "status": rival[1],
-            "rid": rival[2],
-            "interests": rival[3]
-        }
+        # Сортируем по количеству совпадений интересов
+        candidates.sort(
+            key=lambda x: len(user_interests & set(x['interests'].split(','))) if x['interests'] else 0,
+            reverse=True
+        )
+
+        return candidates[0]
 
     # Методы для работы с интересами
     def get_user_interests(self, user_id: int) -> list:
@@ -70,25 +97,25 @@ class database:
         current = self.get_user_interests(user_id)
         if interest not in current:
             current.append(interest)
-            self.users_db.update(
-                {"interests": ','.join(current)}, 
-                {"id": user_id}
-            )
+            self._update_interests(user_id, current)
 
     def remove_interest(self, user_id: int, interest: str):
         current = self.get_user_interests(user_id)
         if interest in current:
             current.remove(interest)
-            new_interests = ','.join(current) if current else ''
-            self.users_db.update(
-                {"interests": new_interests}, 
-                {"id": user_id}
-            )
+            self._update_interests(user_id, current)
+
+    def _update_interests(self, user_id: int, interests: list):
+        new_interests = ','.join([i.strip() for i in interests if i.strip()])
+        self.users_db.update(
+            {"interests": new_interests}, 
+            {"id": user_id}
+        )
 
     def clear_interests(self, user_id: int):
         self.users_db.update({"interests": ''}, {"id": user_id})
 
-    # Остальные методы остаются без изменений
+    # Остальные методы
     def start_chat(self, user_id: int, rival_id: int):
         self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
         self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
