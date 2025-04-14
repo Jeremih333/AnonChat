@@ -10,7 +10,8 @@ class database:
             """
                 id INTEGER PRIMARY KEY,
                 status INTEGER DEFAULT 0,
-                rid INTEGER DEFAULT 0
+                rid INTEGER DEFAULT 0,
+                interests TEXT DEFAULT ''
             """
         )
 
@@ -30,7 +31,8 @@ class database:
         result = self.users_db.select("*", {"id": user_id}, False)
         return {
             "status": result[1],
-            "rid": result[2]
+            "rid": result[2],
+            "interests": result[3]
         } if result else None
 
     def get_users_in_search(self) -> int:
@@ -38,7 +40,7 @@ class database:
         return len(result) if result else 0
 
     def new_user(self, user_id: int):
-        self.users_db.insert([user_id, 0, 0])
+        self.users_db.insert([user_id, 0, 0, ''])
 
     def search(self, user_id: int):
         self.users_db.update({"rid": 0, "status": 1}, {"id": user_id})
@@ -47,7 +49,6 @@ class database:
         if not result:
             return None
 
-        # Исключаем текущего пользователя из результатов
         candidates = [row for row in result if row[0] != user_id]
         if not candidates:
             return None
@@ -56,9 +57,38 @@ class database:
         return {
             "id": rival[0],
             "status": rival[1],
-            "rid": rival[2]
+            "rid": rival[2],
+            "interests": rival[3]
         }
 
+    # Методы для работы с интересами
+    def get_user_interests(self, user_id: int) -> list:
+        result = self.users_db.select("interests", {"id": user_id}, False)
+        return result[0].split(',') if result and result[0] else []
+
+    def add_interest(self, user_id: int, interest: str):
+        current = self.get_user_interests(user_id)
+        if interest not in current:
+            current.append(interest)
+            self.users_db.update(
+                {"interests": ','.join(current)}, 
+                {"id": user_id}
+            )
+
+    def remove_interest(self, user_id: int, interest: str):
+        current = self.get_user_interests(user_id)
+        if interest in current:
+            current.remove(interest)
+            new_interests = ','.join(current) if current else ''
+            self.users_db.update(
+                {"interests": new_interests}, 
+                {"id": user_id}
+            )
+
+    def clear_interests(self, user_id: int):
+        self.users_db.update({"interests": ''}, {"id": user_id})
+
+    # Остальные методы остаются без изменений
     def start_chat(self, user_id: int, rival_id: int):
         self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
         self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
