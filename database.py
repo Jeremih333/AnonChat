@@ -14,6 +14,7 @@ class database:
                 interests TEXT DEFAULT ''
             """
         )
+        self.users_db.create_table()
 
         # Инициализация таблицы связей сообщений
         self.messages_db = db(
@@ -26,20 +27,25 @@ class database:
                 PRIMARY KEY(user_id, message_id)
             """
         )
+        self.messages_db.create_table()
 
     def get_user_cursor(self, user_id: int) -> dict:
-        result = self.users_db.select("*", {"id": user_id}, False)
-        if not result:
+        result = self.users_db.select(
+            "id, status, rid, interests", 
+            {"id": user_id}, 
+            False
+        )
+        if not result or len(result) < 4:
             return None
         return {
             "id": result[0],
             "status": result[1],
             "rid": result[2],
-            "interests": result[3]
+            "interests": result[3] if result[3] else ''
         }
 
     def get_users_in_search(self) -> int:
-        result = self.users_db.select("*", {"status": 1}, True)
+        result = self.users_db.select("id", {"status": 1}, True)
         return len(result) if result else 0
 
     def new_user(self, user_id: int):
@@ -52,11 +58,9 @@ class database:
 
         self.users_db.update({"rid": 0, "status": 1}, {"id": user_id})
         
-        # Получаем интересы текущего пользователя
         user_interests = set(current_user['interests'].split(',')) if current_user['interests'] else set()
         
-        # Ищем кандидатов с совпадающими интересами
-        all_candidates = self.users_db.select("*", {"status": 1}, True)
+        all_candidates = self.users_db.select("id, status, rid, interests", {"status": 1}, True)
         if not all_candidates:
             return None
 
@@ -65,10 +69,8 @@ class database:
             if candidate[0] == user_id:
                 continue
             
-            # Получаем интересы кандидата
             candidate_interests = set(candidate[3].split(',')) if candidate[3] else set()
             
-            # Если есть пересечение интересов или интересы не указаны
             if not user_interests or user_interests & candidate_interests:
                 candidates.append({
                     "id": candidate[0],
@@ -80,7 +82,6 @@ class database:
         if not candidates:
             return None
 
-        # Сортируем по количеству совпадений интересов
         candidates.sort(
             key=lambda x: len(user_interests & set(x['interests'].split(','))) if x['interests'] else 0,
             reverse=True
@@ -88,7 +89,6 @@ class database:
 
         return candidates[0]
 
-    # Методы для работы с интересами
     def get_user_interests(self, user_id: int) -> list:
         result = self.users_db.select("interests", {"id": user_id}, False)
         return result[0].split(',') if result and result[0] else []
@@ -115,7 +115,6 @@ class database:
     def clear_interests(self, user_id: int):
         self.users_db.update({"interests": ''}, {"id": user_id})
 
-    # Остальные методы
     def start_chat(self, user_id: int, rival_id: int):
         self.users_db.update({"status": 2, "rid": rival_id}, {"id": user_id})
         self.users_db.update({"status": 2, "rid": user_id}, {"id": rival_id})
