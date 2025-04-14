@@ -14,19 +14,15 @@ from aiogram.types import (
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-
-# Импорты из ваших модулей
 from database import database
 from keyboard import online
 
-# Проверка обязательных переменных окружения
 if not (token := os.getenv("TELEGRAM_BOT_TOKEN")):
-    raise ValueError("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
+    raise ValueError("TELEGRAM_BOT_TOKEN не установлен!")
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-service-name.onrender.com")
-PORT = int(os.getenv("PORT", 10000))  # Render использует порт 10000 по умолчанию
+PORT = int(os.getenv("PORT", 10000))
 
-# Инициализация бота и диспетчера
 bot = Bot(token)
 dp = Dispatcher()
 db = database("users.db")
@@ -45,7 +41,7 @@ async def start_command(message: Message):
         db.new_user(message.from_user.id)
         await message.answer(
             "👥 Добро пожаловать в Анонимный Чат Бот!\n"
-            "🗣 Наш бот предоставляет возможность анонимного общения.\n",
+            "🗣 Наш бот предоставляет возможность анонимного общения.",
             reply_markup=online.builder("🔎 Найти чат")
         )
     else:
@@ -64,8 +60,7 @@ async def search_chat(message: Message):
             [InlineKeyboardButton(text="🔄 Проверить подписку", callback_data="check_sub")]
         ])
         await message.answer(
-            "⚠️ Для использования бота необходимо подписаться на наш чат!\n"
-            "После подписки нажмите кнопку ниже:",
+            "⚠️ Для использования бота необходимо подписаться на наш чат!",
             reply_markup=subscribe_markup
         )
         return
@@ -84,7 +79,7 @@ async def search_chat(message: Message):
             text = (
                 "Собеседник найден 🐵\n"
                 "/next — искать нового собеседника\n"
-                "/stop — закончить диалог\n\n"
+                "/stop — закончить диалог\n"
                 "/interests — добавить интересы поиска\n\n"
                 "https://t.me/Anonchatyooubot"
             )
@@ -102,27 +97,26 @@ async def check_subscription(callback: CallbackQuery):
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
-    if user and user["status"] == 2:
+    if user and user.get("status") == 2:
         rival_id = user["rid"]
         db.stop_chat(message.from_user.id, rival_id)
         
         feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👍🏾", callback_data="rate_good"),
-             InlineKeyboardButton(text="👎🏾", callback_data="rate_bad"),
+            [InlineKeyboardButton(text="👍", callback_data="rate_good"),
+             InlineKeyboardButton(text="👎", callback_data="rate_bad"),
              InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
         await message.answer(
-            "Диалог завершен. Ищем нового собеседника...\n\n"
-            "Если хотите, оставьте мнение о вашем собеседнике.\n"
-            "Это поможет находить вам подходящих собеседников",
+            "Диалог завершен. Ищем нового собеседника...\n"
+            "Оставьте мнение о собеседнике:",
             reply_markup=feedback_markup
         )
         
         await bot.send_message(
             rival_id,
-            "Собеседник закончил с вами связь 😞\n"
-            "Напишите /search чтобы найти следующего\n\n"
+            "Собеседник закончил диалог 😞\n"
+            "Напишите /search для нового поиска\n\n"
             "https://t.me/Anonchatyooubot"
         )
 
@@ -138,13 +132,26 @@ async def interests_command(message: Message):
         [InlineKeyboardButton(text=interest, callback_data=f"interest_{interest}")] 
         for interest in interests
     ]
-    buttons.append([InlineKeyboardButton(text="❌Сбросить интересы", callback_data="reset_interests")])
+    buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
     
     await message.answer(
-        "Мы попытаемся соединить вас с собеседниками, которые выбрали похожие интересы.\n\n"
-        "Выберите ваши интересы:",
+        "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
+
+@dp.callback_query(F.data.startswith("interest_"))
+async def interest_handler(callback: CallbackQuery):
+    interest = callback.data.split("_", 1)[1]
+    try:
+        db.add_interest(callback.from_user.id, interest)
+        await callback.answer(f"✅ Добавлен: {interest}")
+    except Exception:
+        await callback.answer("❌ Ошибка обновления")
+
+@dp.callback_query(F.data == "reset_interests")
+async def reset_interests(callback: CallbackQuery):
+    db.clear_interests(callback.from_user.id)
+    await callback.answer("✅ Интересы сброшены")
 
 @dp.message(Command("next"))
 async def next_command(message: Message):
@@ -154,7 +161,7 @@ async def next_command(message: Message):
 @dp.message(Command("link"))
 async def link_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
-    if user and user["status"] == 2:
+    if user and user.get("status") == 2:
         try:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
@@ -168,17 +175,18 @@ async def link_command(message: Message):
                 text="🔗 Ваш собеседник поделился ссылкой:",
                 reply_markup=keyboard
             )
-            await message.answer("✅ Ссылка успешно отправлена!")
+            await message.answer("✅ Ссылка отправлена!")
         except Exception as e:
-            print(f"Ошибка отправки ссылки: {e}")
-            await message.answer("❌ Не удалось отправить ссылку")
+            await message.answer("❌ Ошибка отправки")
 
 @dp.message(F.text == "❌ Завершить поиск")
 async def stop_search(message: Message):
     user = db.get_user_cursor(message.from_user.id)
-    if user and user["status"] == 1:
+    if user and user.get("status") == 1:
         db.stop_search(message.from_user.id)
         await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
+    else:
+        await message.answer("❌ Активный поиск не найден")
 
 @dp.message(F.text == "❌ Завершить диалог")
 async def stop_chat(message: Message):
@@ -190,7 +198,7 @@ async def handle_reaction(event: MessageReactionUpdated):
         return
 
     user = db.get_user_cursor(event.user.id)
-    if user and user["status"] == 2 and event.new_reaction:
+    if user and user.get("status") == 2 and event.new_reaction:
         rival_id = user["rid"]
         try:
             original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
@@ -208,13 +216,13 @@ async def handle_reaction(event: MessageReactionUpdated):
                 message_id=original_msg_id,
                 reaction=reaction
             )
-        except Exception as e:
-            print(f"Ошибка обработки реакции: {e}")
+        except Exception:
+            pass
 
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
     user = db.get_user_cursor(message.from_user.id)
-    if user and user["status"] == 2:
+    if user and user.get("status") == 2:
         try:
             if message.photo:
                 sent_msg = await bot.send_photo(user["rid"], message.photo[-1].file_id, caption=message.caption)
@@ -230,8 +238,8 @@ async def handler_message(message: Message):
             db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
             db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
 
-        except Exception as e:
-            print(f"Ошибка при пересылке: {e}")
+        except Exception:
+            pass
 
 async def on_startup(bot: Bot):
     await bot.set_webhook(f"{WEBHOOK_URL}/webhook")
@@ -245,30 +253,23 @@ async def main():
         BotCommand(command="/interests", description="Настроить интересы")
     ])
     
-    # Настройка веб-приложения
     app = web.Application()
     app["bot"] = bot
     
-    # Регистрация обработчика вебхуков
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
     )
     webhook_requests_handler.register(app, path="/webhook")
     
-    # Настройка приложения
     setup_application(app, dp, bot=bot)
-    
-    # Установка вебхука при старте
     await on_startup(bot)
     
-    # Запуск сервера
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
     await site.start()
     
-    # Бесконечный цикл
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
