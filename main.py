@@ -121,17 +121,15 @@ async def stop_command(message: Message):
             [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
-        await message.answer(
-            "Диалог завершен.\nОставьте мнение о собеседнике:",
-            reply_markup=feedback_markup
-        )
-        
-        await bot.send_message(
-            rival_id,
-            "Собеседник закончил диалог 😞\n"
-            f"<code>{'https://t.me/Anonchatyooubot'}</code>",
-            parse_mode=ParseMode.HTML
-        )
+        # Отправляем сообщение обоим участникам
+        for user_id in [message.from_user.id, rival_id]:
+            await bot.send_message(
+                user_id,
+                "Диалог завершен.\nОставьте мнение о собеседнике:\n"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=feedback_markup
+            )
 
 @dp.message(Command("interests"))
 async def interests_command(message: Message):
@@ -179,17 +177,15 @@ async def next_command(message: Message):
             [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
-        await message.answer(
-            "Ищем нового собеседника...\nОставьте мнение о предыдущем собеседнике:",
-            reply_markup=feedback_markup
-        )
-        
-        await bot.send_message(
-            rival_id,
-            "Собеседник начал новый поиск 🔄\n"
-            f"<code>{'https://t.me/Anonchatyooubot'}</code>",
-            parse_mode=ParseMode.HTML
-        )
+        # Отправляем сообщение обоим участникам
+        for user_id in [message.from_user.id, rival_id]:
+            await bot.send_message(
+                user_id,
+                "Диалог завершен.\nОставьте мнение о собеседнике:\n"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=feedback_markup
+            )
     await search_chat(message)
 
 @dp.message(Command("link"))
