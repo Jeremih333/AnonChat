@@ -4,11 +4,13 @@ from datetime import datetime, timedelta
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import (
-    Message, 
-    CallbackQuery, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
-    BotCommand, 
+    Message,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    BotCommand,
+    MessageReactionUpdated,
+    ReactionTypeEmoji,
     ChatMemberUpdated,
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
@@ -29,6 +31,7 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
+# Middleware для проверки блокировки пользователя
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -69,7 +72,7 @@ async def check_chats_task():
         
         await asyncio.sleep(180)
 
-def get_block_keyboard(user_id: int):
+def get_block_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Навсегда", callback_data=f"block_forever_{user_id}"),
@@ -85,6 +88,7 @@ def get_block_keyboard(user_id: int):
 
 @dp.callback_query(F.data == "report")
 async def handle_report(callback: CallbackQuery):
+    # Берём последнего собеседника из БД, а не из статуса
     last_rival_id = db.get_last_rival(callback.from_user.id)
     if not last_rival_id:
         await callback.answer("❌ Не удалось определить собеседника для жалобы", show_alert=True)
@@ -106,6 +110,7 @@ async def handle_report(callback: CallbackQuery):
             reply_markup=get_block_keyboard(last_rival_id)
         )
         await callback.answer("✅ Жалоба отправлена")
+        # Удаляем кнопки оценки и жалобы у пользователя
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         await callback.answer("❌ Ошибка отправки жалобы", show_alert=True)
@@ -115,7 +120,7 @@ async def handle_block_action(callback: CallbackQuery):
     parts = callback.data.split('_')
     action = parts[1]
     user_id = int(parts[2])
-    
+
     durations = {
         'forever': None,
         'year': timedelta(days=365),
@@ -123,11 +128,11 @@ async def handle_block_action(callback: CallbackQuery):
         'week': timedelta(weeks=1),
         'day': timedelta(days=1)
     }
-    
+
     duration = durations.get(action)
     block_until = datetime.now() + duration if duration else None
     db.block_user(user_id, block_until=block_until)
-    
+
     await callback.answer(f"✅ Пользователь {user_id} заблокирован")
     await callback.message.edit_reply_markup(reply_markup=None)
 
@@ -137,19 +142,108 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
+@dp.message(Command("dev"))
+async def dev_menu(message: Message):
+    if message.from_user.id == DEVELOPER_ID:
+        stats = {"total_users": "N/A"}
+        try:
+            db.cursor.execute("SELECT COUNT(*) FROM users")
+            stats["total_users"] = db.cursor.fetchone()[0]
+        except Exception:
+            pass
+
+        await message.answer(
+            f"👨‍💻 Меню разработчика\n"
+            f"Пользователей в базе: {stats['total_users']}\n"
+            "Жалобы направляются сюда автоматически."
+        )
+
+@dp.message(Command("start"))
+async def start_command(message: Message):
+    try:
+        user = db.get_user_cursor(message.from_user.id)
+    except Exception as e:
+        if "no such column" in str(e):
+            db._create_tables()
+            db._migrate_database()
+            user = None
+        else:
+            raise
+
+    if not user:
+        db.new_user(message.from_user.id)
+        await message.answer(
+            "👥 Добро пожаловать в Анонимный Чат Бот!\n"
+            "🗣 Наш бот предоставляет возможность анонимного общения.",
+            reply_markup=online.builder("🔎 Найти чат")
+        )
+    else:
+        await search_chat(message)
+
+@dp.message(Command("search"))
+async def search_command(message: Message):
+    await search_chat(message)
+
+@dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
+async def block_links(message: Message):
+    await message.delete()
+    await message.answer("❌ Отправка ссылок и упоминаний запрещена!")
+
+@dp.message(F.text == "🔎 Найти чат")
+async def search_chat(message: Message):
+    if not await is_subscribed(message.from_user.id):
+        subscribe_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Подписаться", url="https://t.me/freedom346")],
+            [InlineKeyboardButton(text="🔄 Проверить подписку", callback_data="check_sub")]
+        ])
+        await message.answer(
+            "⚠️ Для использования бота необходимо подписаться на наш чат!",
+            reply_markup=subscribe_markup
+        )
+        return
+
+    user = db.get_user_cursor(message.from_user.id)
+    if user:
+        rival = db.search(message.from_user.id)
+
+        if not rival:
+            await message.answer(
+                "🔎 Ищем собеседника...",
+                reply_markup=online.builder("❌ Завершить поиск")
+            )
+        else:
+            db.start_chat(message.from_user.id, rival["id"])
+            text = (
+                "Собеседник найден 🐵\n"
+                "/next — искать нового собеседника\n"
+                "/stop — закончить диалог\n"
+                "/interests — добавить интересы поиска\n\n"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>"
+            )
+            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
+            await bot.send_message(rival["id"], text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
+
+@dp.callback_query(F.data == "check_sub")
+async def check_subscription(callback: CallbackQuery):
+    if await is_subscribed(callback.from_user.id):
+        await callback.message.edit_text("✅ Спасибо за подписку! Теперь вы можете использовать бота.")
+        await search_chat(callback.message)
+    else:
+        await callback.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
+
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         rival_id = user["rid"]
         db.stop_chat(message.from_user.id, rival_id)
-        
+
         feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👍", callback_data="rate_good"),
              InlineKeyboardButton(text="👎", callback_data="rate_bad")],
             [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
-        
+
         for user_id in [message.from_user.id, rival_id]:
             await bot.send_message(
                 user_id,
@@ -159,33 +253,175 @@ async def stop_command(message: Message):
                 reply_markup=feedback_markup
             )
 
-@dp.callback_query(F.data == "rate_good")
-async def handle_rate_good(callback: CallbackQuery):
-    user = db.get_user_cursor(callback.from_user.id)
-    if user and user.get("status") == 0:
-        last_rival_id = db.get_last_rival(callback.from_user.id)
-        if last_rival_id:
-            db.add_rating(last_rival_id, 1)
-            await callback.answer("✅ Вы поставили положительную оценку")
-            await callback.message.edit_reply_markup()
-        else:
-            await callback.answer("❌ Не удалось определить собеседника для оценки", show_alert=True)
-    else:
-        await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
+@dp.message(Command("interests"))
+async def interests_command(message: Message):
+    interests = [
+        "Ролевые игры", "Одиночество", "Игры",
+        "Аниме", "Мемы", "Флирт", "Музыка",
+        "Путешествия", "Фильмы", "Книги",
+        "Питомцы", "Спорт"
+    ]
+    buttons = [
+        [InlineKeyboardButton(text=interest, callback_data=f"interest_{interest}")]
+        for interest in interests
+    ]
+    buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
-@dp.callback_query(F.data == "rate_bad")
-async def handle_rate_bad(callback: CallbackQuery):
-    user = db.get_user_cursor(callback.from_user.id)
-    if user and user.get("status") == 0:
-        last_rival_id = db.get_last_rival(callback.from_user.id)
-        if last_rival_id:
-            db.add_rating(last_rival_id, -1)
-            await callback.answer("✅ Вы поставили негативную оценку")
-            await callback.message.edit_reply_markup()
-        else:
-            await callback.answer("❌ Не удалось определить собеседника для оценки", show_alert=True)
+    await message.answer(
+        "Выберите ваши интересы для поиска:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+
+@dp.callback_query(F.data.startswith("interest_"))
+async def interest_handler(callback: CallbackQuery):
+    interest = callback.data.split("_", 1)[1]
+    try:
+        db.add_interest(callback.from_user.id, interest)
+        await callback.answer(f"✅ Добавлен: {interest}")
+    except Exception:
+        await callback.answer("❌ Ошибка обновления")
+
+@dp.callback_query(F.data == "reset_interests")
+async def reset_interests(callback: CallbackQuery):
+    db.clear_interests(callback.from_user.id)
+    await callback.answer("✅ Интересы сброшены")
+
+@dp.message(Command("next"))
+async def next_command(message: Message):
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 2:
+        rival_id = user["rid"]
+        db.stop_chat(message.from_user.id, rival_id)
+
+        feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👍", callback_data="rate_good"),
+             InlineKeyboardButton(text="👎", callback_data="rate_bad")],
+            [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
+        ])
+
+        for user_id in [message.from_user.id, rival_id]:
+            await bot.send_message(
+                user_id,
+                "Диалог завершен.\nОставьте мнение о собеседнике:\n"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=feedback_markup
+            )
+    await search_chat(message)
+
+@dp.message(Command("link"))
+async def link_command(message: Message):
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 2:
+        try:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="👤 Профиль собеседника",
+                    url=f"tg://user?id={message.from_user.id}"
+                )]
+            ])
+
+            await bot.send_message(
+                chat_id=user["rid"],
+                text="🔗 Ваш собеседник поделился ссылкой:",
+                reply_markup=keyboard
+            )
+            await message.answer("✅ Ссылка отправлена!")
+        except Exception:
+            await message.answer("❌ Ошибка отправки")
+
+@dp.message(F.text == "❌ Завершить поиск")
+async def stop_search(message: Message):
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 1:
+        db.stop_search(message.from_user.id)
+        await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
     else:
-        await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
+        await message.answer("❌ Активный поиск не найден")
+
+@dp.message(F.text == "❌ Завершить диалог")
+async def stop_chat(message: Message):
+    await stop_command(message)
+
+@dp.message_reaction()
+async def handle_reaction(event: MessageReactionUpdated):
+    if event.old_reaction == event.new_reaction:
+        return
+
+    user = db.get_user_cursor(event.user.id)
+    if user and user.get("status") == 2 and event.new_reaction:
+        rival_id = user["rid"]
+        try:
+            original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
+            if not original_msg_id:
+                return
+
+            reaction = [
+                ReactionTypeEmoji(emoji=r.emoji)
+                for r in event.new_reaction
+                if r.type == "emoji"
+            ]
+
+            await bot.set_message_reaction(
+                chat_id=rival_id,
+                message_id=original_msg_id,
+                reaction=reaction
+            )
+        except Exception as e:
+            print(f"Ошибка обработки реакции: {e}")
+
+@dp.message(F.chat.type == ChatType.PRIVATE)
+async def handler_message(message: Message):
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 2:
+        try:
+            reply_to_message_id = None
+            if message.reply_to_message:
+                reply_to_message_id = db.get_rival_message_id(message.from_user.id, message.reply_to_message.message_id)
+
+            sent_msg = None
+            if message.photo:
+                sent_msg = await bot.send_photo(
+                    user["rid"],
+                    message.photo[-1].file_id,
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.text:
+                sent_msg = await bot.send_message(
+                    user["rid"],
+                    message.text,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.voice:
+                sent_msg = await bot.send_audio(
+                    user["rid"],
+                    message.voice.file_id,
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.video_note:
+                sent_msg = await bot.send_video_note(
+                    user["rid"],
+                    message.video_note.file_id,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.sticker:
+                sent_msg = await bot.send_sticker(
+                    user["rid"],
+                    message.sticker.file_id,
+                    reply_to_message_id=reply_to_message_id
+                )
+
+            if sent_msg:
+                db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
+                db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
+
+                content = message.text or message.caption or ''
+                db.save_message(message.from_user.id, user["rid"], content)
+
+        except Exception as e:
+            print(f"Ошибка пересылки сообщения: {e}")
 
 async def is_subscribed(user_id: int) -> bool:
     try:
@@ -199,7 +435,7 @@ async def on_startup(bot: Bot):
 
 async def main():
     asyncio.create_task(check_chats_task())
-    
+
     await bot.set_my_commands([
         BotCommand(command="/start", description="Начать поиск"),
         BotCommand(command="/stop", description="Закончить диалог"),
@@ -209,24 +445,24 @@ async def main():
         BotCommand(command="/interests", description="Настроить интересы"),
         BotCommand(command="/dev", description="Меню разработчика")
     ])
-    
+
     app = web.Application()
     app["bot"] = bot
-    
+
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
     )
     webhook_requests_handler.register(app, path="/webhook")
-    
+
     setup_application(app, dp, bot=bot)
     await on_startup(bot)
-    
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
     await site.start()
-    
+
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
