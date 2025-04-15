@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class database:
     def __init__(self, db_name: str):
@@ -51,7 +51,7 @@ class database:
             )
         """)
         
-        # Таблица для хранения последнего собеседника для оценки
+        # Таблица для хранения последнего собеседника для оценки/жалоб
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS last_rivals (
                 user_id INTEGER PRIMARY KEY,
@@ -94,7 +94,7 @@ class database:
         except sqlite3.Error as e:
             print(f"Migration error: {e}")
 
-        # Создать таблицы рейтингов, если их нет (для обновления старых баз)
+        # Создать таблицы рейтингов и last_rivals, если их нет (для обновления старых баз)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_ratings (
                 user_id INTEGER PRIMARY KEY,
@@ -148,11 +148,6 @@ class database:
 
         user_interests = set(current_user['interests'].split(',')) if current_user['interests'] else set()
 
-        # Получаем рейтинг текущего пользователя
-        user_rating = self.get_user_rating(user_id)
-        user_pos = user_rating['positive']
-        user_neg = user_rating['negative']
-
         self.cursor.execute(
             "SELECT id, interests FROM users WHERE status = 1 AND id != ?",
             (user_id,)
@@ -199,7 +194,7 @@ class database:
             "UPDATE users SET status = 2, rid = ?, search_started = NULL WHERE id = ?",
             [(rival_id, user_id), (user_id, rival_id)]
         )
-        # Сохраняем в last_rivals для оценки после окончания
+        # Сохраняем в last_rivals для оценки и жалоб после окончания
         self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (user_id, rival_id))
         self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (rival_id, user_id))
         self.conn.commit()
@@ -366,6 +361,7 @@ class database:
             return {"positive": 0, "negative": 0}
 
     def get_last_rival(self, user_id: int):
+        """Возвращает id последнего собеседника пользователя"""
         self.cursor.execute("SELECT rival_id FROM last_rivals WHERE user_id = ?", (user_id,))
         row = self.cursor.fetchone()
         return row["rival_id"] if row else None
