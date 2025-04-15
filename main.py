@@ -374,17 +374,45 @@ async def handler_message(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         try:
+            reply_to_message_id = None
+            if message.reply_to_message:
+                # Получаем ID сообщения собеседника, на которое отвечает пользователь
+                reply_to_message_id = db.get_rival_message_id(message.from_user.id, message.reply_to_message.message_id)
+
             sent_msg = None
+            # В зависимости от типа сообщения передаем reply_to_message_id, если он есть
             if message.photo:
-                sent_msg = await bot.send_photo(user["rid"], message.photo[-1].file_id, caption=message.caption)
+                sent_msg = await bot.send_photo(
+                    user["rid"], 
+                    message.photo[-1].file_id, 
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
             elif message.text:
-                sent_msg = await bot.send_message(user["rid"], message.text)
+                sent_msg = await bot.send_message(
+                    user["rid"], 
+                    message.text,
+                    reply_to_message_id=reply_to_message_id
+                )
             elif message.voice:
-                sent_msg = await bot.send_audio(user["rid"], message.voice.file_id, caption=message.caption)
+                sent_msg = await bot.send_audio(
+                    user["rid"], 
+                    message.voice.file_id, 
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
             elif message.video_note:
-                sent_msg = await bot.send_video_note(user["rid"], message.video_note.file_id)
+                sent_msg = await bot.send_video_note(
+                    user["rid"], 
+                    message.video_note.file_id,
+                    reply_to_message_id=reply_to_message_id
+                )
             elif message.sticker:
-                sent_msg = await bot.send_sticker(user["rid"], message.sticker.file_id)
+                sent_msg = await bot.send_sticker(
+                    user["rid"], 
+                    message.sticker.file_id,
+                    reply_to_message_id=reply_to_message_id
+                )
 
             if sent_msg:
                 db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
