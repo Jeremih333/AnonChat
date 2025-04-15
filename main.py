@@ -8,13 +8,12 @@ from aiogram.types import (
     CallbackQuery, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
-    BotCommand, 
-    ParseMode
+    BotCommand
 )
-from aiogram.enums import ChatMemberStatus
+from aiogram.enums import ChatMemberStatus, ParseMode  # Правильный импорт ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-from database import Database  # Используем новый класс базы данных
+from database import Database
 
 # Инициализация базы данных
 db = Database("users.db")
