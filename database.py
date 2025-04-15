@@ -158,8 +158,28 @@ class Database:
                 [(user1,), (user2,)]
             )
 
-    def update_interests(self, user_id: int, interests: List[str]):
-        """Обновление списка интересов пользователя"""
+    def add_interest(self, user_id: int, interest: str):
+        """Добавление интереса"""
+        interests = self.get_user_interests(user_id)
+        if interest not in interests:
+            interests.append(interest)
+            self._update_interests(user_id, interests)
+
+    def clear_interests(self, user_id: int):
+        """Очистка интересов"""
+        self._update_interests(user_id, [])
+
+    def get_user_interests(self, user_id: int) -> List[str]:
+        """Получение списка интересов"""
+        self.cursor.execute(
+            "SELECT interests FROM users WHERE id = ?",
+            (user_id,)
+        )
+        result = self.cursor.fetchone()
+        return result[0].split(',') if result and result[0] else []
+
+    def _update_interests(self, user_id: int, interests: List[str]):
+        """Обновление интересов в БД"""
         with self.conn:
             self.cursor.execute(
                 "UPDATE users SET interests = ? WHERE id = ?",
@@ -186,7 +206,7 @@ class Database:
                 (user_id, message_id, rival_id)
             )
 
-    def get_linked_message(self, user_id: int, message_id: int) -> Optional[int]:
+    def get_rival_message_id(self, user_id: int, message_id: int) -> Optional[int]:
         """Получение связанного ID сообщения"""
         self.cursor.execute(
             "SELECT rival_id FROM message_links WHERE user_id = ? AND message_id = ?",
@@ -195,12 +215,12 @@ class Database:
         result = self.cursor.fetchone()
         return result[0] if result else None
 
-    def add_vip_status(self, user_id: int, days: int):
-        """Добавление VIP-статуса"""
+    def stop_search(self, user_id: int):
+        """Остановка поиска"""
         with self.conn:
             self.cursor.execute(
-                "UPDATE users SET vip_level = ? WHERE id = ?",
-                (days, user_id)
+                "UPDATE users SET status = 0 WHERE id = ?",
+                (user_id,)
             )
 
     def close(self):
