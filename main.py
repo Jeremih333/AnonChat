@@ -12,9 +12,8 @@ from aiogram.types import (
     MessageReactionUpdated,
     ReactionTypeEmoji,
     ChatMemberUpdated,
-    ChatType
 )
-from aiogram.enums import ChatMemberStatus, ParseMode
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
