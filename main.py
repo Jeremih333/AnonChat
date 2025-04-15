@@ -16,7 +16,7 @@ from aiogram.types import (
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
-from database import database
+from database import Database
 from keyboard import online
 
 class VIPManager:
@@ -46,7 +46,7 @@ PORT = int(os.getenv("PORT", 10000))
 
 bot = Bot(token)
 dp = Dispatcher()
-db = database("users.db")
+db = Database("users.db")
 
 async def is_subscribed(user_id: int) -> bool:
     if VIPManager.is_vip(user_id):
@@ -67,17 +67,16 @@ async def start_command(message: Message):
     referrer_id = int(args[1][4:]) if len(args) > 1 and args[1].startswith('ref') else None
     
     try:
-        user = db.get_user_cursor(message.from_user.id)
+        user = db.get_user(message.from_user.id)
     except sqlite3.OperationalError as e:
         if "no such column" in str(e):
-            db._create_tables()
-            db._migrate_database()
+            db._initialize_database()
             user = None
         else:
             raise
     
     if not user:
-        db.new_user(message.from_user.id, referrer_id)
+        db.create_user(message.from_user.id, referrer_id)
         await message.answer("👤 Пожалуйста, введите ваш возраст (14-99 лет):")
     else:
         await message.answer(
@@ -90,7 +89,8 @@ async def start_command(message: Message):
 async def vip_command(message: Message):
     ref_info = db.get_referral_info(message.from_user.id)
     count = ref_info.get('invited_count', 0)
-    ref_link = f"https://t.me/{bot.token}?start=ref{message.from_user.id}"
+    bot_username = (await bot.get_me()).username
+    ref_link = f"https://t.me/{bot_username}?start=ref{message.from_user.id}"
     
     if count >= 5 and not VIPManager.is_vip(message.from_user.id):
         VIPManager.add_vip(message.from_user.id)
@@ -126,9 +126,9 @@ async def search_chat(message: Message):
         )
         return
 
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user:
-        gender_filter = "Женский" if user.get('gender') == "Мужской" else "Мужской" if VIPManager.is_vip(message.from_user.id) else None
+        gender_filter = "F" if user.get('gender') == "M" else "M" if VIPManager.is_vip(message.from_user.id) else None
         rival = db.search(message.from_user.id, gender_filter)
 
         if not rival:
@@ -139,12 +139,13 @@ async def search_chat(message: Message):
         else:
             db.start_chat(message.from_user.id, rival["id"])
             vip_note = "💎 Это VIP-Пользователь\n" if VIPManager.is_vip(rival["id"]) else ""
+            bot_username = (await bot.get_me()).username
             text = (
                 f"{vip_note}Собеседник найден 🐵\n"
                 "/next — искать нового собеседника\n"
                 "/stop — закончить диалог\n"
                 "/interests — добавить интересы поиска\n\n"
-                f"<code>https://t.me/{bot.token}</code>"
+                f"<code>https://t.me/{bot_username}</code>"
             )
             await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
             await bot.send_message(rival["id"], text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
@@ -159,7 +160,7 @@ async def check_subscription(callback: CallbackQuery):
 
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user and user.get("status") == 2:
         rival_id = user["rid"]
         db.stop_chat(message.from_user.id, rival_id)
@@ -214,7 +215,7 @@ async def reset_interests(callback: CallbackQuery):
 
 @dp.message(Command("next"))
 async def next_command(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user and user.get("status") == 2:
         rival_id = user["rid"]
         db.stop_chat(message.from_user.id, rival_id)
@@ -237,7 +238,7 @@ async def next_command(message: Message):
 
 @dp.message(Command("link"))
 async def link_command(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user and user.get("status") == 2:
         try:
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -258,7 +259,7 @@ async def link_command(message: Message):
 
 @dp.message(F.text == "❌ Завершить поиск")
 async def stop_search(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user and user.get("status") == 1:
         db.stop_search(message.from_user.id)
         await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
@@ -274,7 +275,7 @@ async def handle_reaction(event: MessageReactionUpdated):
     if event.old_reaction == event.new_reaction:
         return
 
-    user = db.get_user_cursor(event.user.id)
+    user = db.get_user(event.user.id)
     if user and user.get("status") == 2 and event.new_reaction:
         rival_id = user["rid"]
         try:
@@ -298,7 +299,7 @@ async def handle_reaction(event: MessageReactionUpdated):
 
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
+    user = db.get_user(message.from_user.id)
     if user and user.get("status") == 2:
         try:
             sent_msg = None
