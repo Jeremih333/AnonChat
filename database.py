@@ -1,8 +1,10 @@
 import sqlite3
+from datetime import datetime
 
 class database:
     def __init__(self, db_name: str):
         self.conn = sqlite3.connect(db_name)
+        self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
         self._create_tables()
         self._migrate_database()
@@ -14,7 +16,10 @@ class database:
                 id INTEGER PRIMARY KEY,
                 status INTEGER DEFAULT 0,
                 rid INTEGER DEFAULT 0,
-                interests TEXT DEFAULT ''
+                interests TEXT DEFAULT '',
+                blocked BOOLEAN DEFAULT 0,
+                blocked_until TEXT DEFAULT NULL,
+                search_started TEXT DEFAULT NULL
             )
         """)
         
@@ -24,6 +29,16 @@ class database:
                 message_id INTEGER,
                 rival_message_id INTEGER,
                 PRIMARY KEY(user_id, message_id)
+            )
+        """)
+        
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER,
+                receiver_id INTEGER,
+                content TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
         self.conn.commit()
@@ -40,6 +55,24 @@ class database:
                     ADD COLUMN interests TEXT DEFAULT ''
                 """)
                 self.conn.commit()
+            if 'blocked' not in columns:
+                self.cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN blocked BOOLEAN DEFAULT 0
+                """)
+                self.conn.commit()
+            if 'blocked_until' not in columns:
+                self.cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN blocked_until TEXT DEFAULT NULL
+                """)
+                self.conn.commit()
+            if 'search_started' not in columns:
+                self.cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN search_started TEXT DEFAULT NULL
+                """)
+                self.conn.commit()
         except sqlite3.Error as e:
             print(f"Migration error: {e}")
 
@@ -47,16 +80,11 @@ class database:
         """Получение информации о пользователе"""
         try:
             self.cursor.execute(
-                "SELECT id, status, rid, interests FROM users WHERE id = ?",
+                "SELECT * FROM users WHERE id = ?",
                 (user_id,)
             )
             result = self.cursor.fetchone()
-            return {
-                "id": result[0],
-                "status": result[1],
-                "rid": result[2],
-                "interests": result[3] if result[3] else ''
-            } if result else None
+            return dict(result) if result else None
         except sqlite3.OperationalError as e:
             if "no such column" in str(e):
                 self._migrate_database()
@@ -66,7 +94,7 @@ class database:
     def new_user(self, user_id: int):
         """Добавляет нового пользователя"""
         self.cursor.execute(
-            "INSERT INTO users (id) VALUES (?)",
+            "INSERT OR IGNORE INTO users (id) VALUES (?)",
             (user_id,)
         )
         self.conn.commit()
@@ -77,9 +105,10 @@ class database:
         if not current_user:
             return None
 
+        now_str = datetime.now().isoformat()
         self.cursor.execute(
-            "UPDATE users SET status = 1, rid = 0 WHERE id = ?",
-            (user_id,)
+            "UPDATE users SET status = 1, rid = 0, search_started = ? WHERE id = ?",
+            (now_str, user_id)
         )
         self.conn.commit()
 
@@ -91,7 +120,7 @@ class database:
         )
         candidates = []
         for candidate in self.cursor.fetchall():
-            c_id, c_interests = candidate
+            c_id, c_interests = candidate['id'], candidate['interests']
             candidate_interests = set(c_interests.split(',')) if c_interests else set()
             
             if not user_interests or user_interests & candidate_interests:
@@ -110,7 +139,7 @@ class database:
     def start_chat(self, user_id: int, rival_id: int):
         """Начинает чат между двумя пользователями"""
         self.cursor.executemany(
-            "UPDATE users SET status = 2, rid = ? WHERE id = ?",
+            "UPDATE users SET status = 2, rid = ?, search_started = NULL WHERE id = ?",
             [(rival_id, user_id), (user_id, rival_id)]
         )
         self.conn.commit()
@@ -118,7 +147,7 @@ class database:
     def stop_chat(self, user_id: int, rival_id: int):
         """Завершает чат между пользователями"""
         self.cursor.executemany(
-            "UPDATE users SET status = 0, rid = 0 WHERE id = ?",
+            "UPDATE users SET status = 0, rid = 0, search_started = NULL WHERE id = ?",
             [(user_id,), (rival_id,)]
         )
         self.conn.commit()
@@ -126,7 +155,7 @@ class database:
     def stop_search(self, user_id: int):
         """Останавливает поиск собеседника"""
         self.cursor.execute(
-            "UPDATE users SET status = 0, rid = 0 WHERE id = ?",
+            "UPDATE users SET status = 0, rid = 0, search_started = NULL WHERE id = ?",
             (user_id,)
         )
         self.conn.commit()
@@ -134,7 +163,7 @@ class database:
     def save_message_link(self, user_id: int, message_id: int, rival_message_id: int):
         """Сохраняет связь между сообщениями"""
         self.cursor.execute(
-            "INSERT INTO message_links VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO message_links VALUES (?, ?, ?)",
             (user_id, message_id, rival_message_id)
         )
         self.conn.commit()
@@ -183,10 +212,67 @@ class database:
         )
         self.conn.commit()
 
-    def get_users_in_search(self) -> int:
-        """Возвращает количество пользователей в поиске"""
-        self.cursor.execute("SELECT COUNT(*) FROM users WHERE status = 1")
-        return self.cursor.fetchone()[0]
+    def get_users_in_long_search(self, time_threshold: datetime):
+        """Возвращает пользователей, которые в поиске дольше time_threshold"""
+        self.cursor.execute(
+            "SELECT * FROM users WHERE status = 1 AND search_started IS NOT NULL"
+        )
+        users = []
+        for row in self.cursor.fetchall():
+            if row['search_started']:
+                started = datetime.fromisoformat(row['search_started'])
+                if started < time_threshold:
+                    users.append(dict(row))
+        return users
+
+    def get_expired_blocks(self, now: datetime):
+        """Возвращает пользователей с истёкшим временем блокировки"""
+        self.cursor.execute(
+            "SELECT * FROM users WHERE blocked = 1 AND blocked_until IS NOT NULL"
+        )
+        users = []
+        for row in self.cursor.fetchall():
+            if row['blocked_until']:
+                until = datetime.fromisoformat(row['blocked_until'])
+                if until < now:
+                    users.append(dict(row))
+        return users
+
+    def block_user(self, user_id: int, block_until: datetime = None, permanent=False):
+        if permanent:
+            self.cursor.execute(
+                "UPDATE users SET blocked = 1, blocked_until = NULL WHERE id = ?",
+                (user_id,)
+            )
+        else:
+            until_str = block_until.isoformat() if block_until else None
+            self.cursor.execute(
+                "UPDATE users SET blocked = 1, blocked_until = ? WHERE id = ?",
+                (until_str, user_id)
+            )
+        self.conn.commit()
+
+    def unblock_user(self, user_id: int):
+        self.cursor.execute(
+            "UPDATE users SET blocked = 0, blocked_until = NULL WHERE id = ?",
+            (user_id,)
+        )
+        self.conn.commit()
+
+    def save_message(self, sender_id: int, receiver_id: int, content: str):
+        self.cursor.execute(
+            "INSERT INTO messages (sender_id, receiver_id, content) VALUES (?, ?, ?)",
+            (sender_id, receiver_id, content)
+        )
+        self.conn.commit()
+
+    def get_chat_log(self, user1_id: int, user2_id: int, limit=10):
+        self.cursor.execute('''
+            SELECT * FROM messages 
+            WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+            ORDER BY timestamp DESC LIMIT ?
+        ''', (user1_id, user2_id, user2_id, user1_id, limit))
+        return [dict(row) for row in self.cursor.fetchall()]
 
     def close(self):
         """Закрывает соединение с базой данных"""
