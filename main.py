@@ -174,7 +174,7 @@ async def stop_command(message: Message):
             await bot.send_message(
                 user_id,
                 "Диалог завершен.\nОставьте мнение о собеседнике:\n"
-                f"<code>https://t.me/{bot.token}</code>",
+                f"<code>https://t.me/Anonchatyooubot</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
@@ -229,7 +229,7 @@ async def next_command(message: Message):
             await bot.send_message(
                 user_id,
                 "Диалог завершен.\nОставьте мнение о собеседнике:\n"
-                f"<code>https://t.me/{bot.token}</code>",
+                f"<code>https://t.me/Anonchatyooubot</code>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
