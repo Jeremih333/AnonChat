@@ -41,6 +41,24 @@ class database:
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Таблица для рейтингов пользователей
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_ratings (
+                user_id INTEGER PRIMARY KEY,
+                positive INTEGER DEFAULT 0,
+                negative INTEGER DEFAULT 0
+            )
+        """)
+        
+        # Таблица для хранения последнего собеседника для оценки
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS last_rivals (
+                user_id INTEGER PRIMARY KEY,
+                rival_id INTEGER
+            )
+        """)
+        
         self.conn.commit()
 
     def _migrate_database(self):
@@ -76,6 +94,22 @@ class database:
         except sqlite3.Error as e:
             print(f"Migration error: {e}")
 
+        # Создать таблицы рейтингов, если их нет (для обновления старых баз)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_ratings (
+                user_id INTEGER PRIMARY KEY,
+                positive INTEGER DEFAULT 0,
+                negative INTEGER DEFAULT 0
+            )
+        """)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS last_rivals (
+                user_id INTEGER PRIMARY KEY,
+                rival_id INTEGER
+            )
+        """)
+        self.conn.commit()
+
     def get_user_cursor(self, user_id: int) -> dict:
         """Получение информации о пользователе"""
         try:
@@ -100,7 +134,7 @@ class database:
         self.conn.commit()
 
     def search(self, user_id: int):
-        """Поиск подходящего собеседника"""
+        """Поиск подходящего собеседника с учетом рейтинга"""
         current_user = self.get_user_cursor(user_id)
         if not current_user:
             return None
@@ -114,6 +148,11 @@ class database:
 
         user_interests = set(current_user['interests'].split(',')) if current_user['interests'] else set()
 
+        # Получаем рейтинг текущего пользователя
+        user_rating = self.get_user_rating(user_id)
+        user_pos = user_rating['positive']
+        user_neg = user_rating['negative']
+
         self.cursor.execute(
             "SELECT id, interests FROM users WHERE status = 1 AND id != ?",
             (user_id,)
@@ -122,26 +161,47 @@ class database:
         for candidate in self.cursor.fetchall():
             c_id, c_interests = candidate['id'], candidate['interests']
             candidate_interests = set(c_interests.split(',')) if c_interests else set()
-            
+
+            # Получаем рейтинг кандидата
+            c_rating = self.get_user_rating(c_id)
+            c_pos = c_rating['positive']
+            c_neg = c_rating['negative']
+
+            # Фильтр по интересам
             if not user_interests or user_interests & candidate_interests:
                 candidates.append({
                     "id": c_id,
-                    "interests": candidate_interests
+                    "interests": candidate_interests,
+                    "positive": c_pos,
+                    "negative": c_neg
                 })
 
-        candidates.sort(
-            key=lambda x: len(user_interests & x['interests']),
-            reverse=True
-        )
+        # Сортируем кандидатов с учетом рейтинга и пересечения интересов:
+        # 1) Чем больше совпадений интересов - выше
+        # 2) Пользователи с >=5 негативными рейтингами идут в конец
+        # 3) Пользователи с >=5 положительными рейтингами идут в начало
+        def sort_key(c):
+            interest_score = len(user_interests & c['interests'])
+            rating_score = 0
+            if c['negative'] >= 5:
+                rating_score -= 1000  # очень низкий приоритет
+            if c['positive'] >= 5:
+                rating_score += 1000  # очень высокий приоритет
+            return (rating_score, interest_score)
+
+        candidates.sort(key=sort_key, reverse=True)
 
         return candidates[0] if candidates else None
 
     def start_chat(self, user_id: int, rival_id: int):
-        """Начинает чат между двумя пользователями"""
+        """Начинает чат между двумя пользователями и сохраняет последний собеседник"""
         self.cursor.executemany(
             "UPDATE users SET status = 2, rid = ?, search_started = NULL WHERE id = ?",
             [(rival_id, user_id), (user_id, rival_id)]
         )
+        # Сохраняем в last_rivals для оценки после окончания
+        self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (user_id, rival_id))
+        self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (rival_id, user_id))
         self.conn.commit()
 
     def stop_chat(self, user_id: int, rival_id: int):
@@ -273,6 +333,42 @@ class database:
             ORDER BY timestamp DESC LIMIT ?
         ''', (user1_id, user2_id, user2_id, user1_id, limit))
         return [dict(row) for row in self.cursor.fetchall()]
+
+    def add_rating(self, user_id: int, rating: int):
+        """Добавляет рейтинг пользователю: rating = 1 (положительный) или -1 (негативный)"""
+        self.cursor.execute("SELECT positive, negative FROM user_ratings WHERE user_id = ?", (user_id,))
+        row = self.cursor.fetchone()
+        if row:
+            positive, negative = row['positive'], row['negative']
+            if rating > 0:
+                positive += 1
+            else:
+                negative += 1
+            self.cursor.execute(
+                "UPDATE user_ratings SET positive = ?, negative = ? WHERE user_id = ?",
+                (positive, negative, user_id)
+            )
+        else:
+            positive = 1 if rating > 0 else 0
+            negative = 1 if rating < 0 else 0
+            self.cursor.execute(
+                "INSERT INTO user_ratings (user_id, positive, negative) VALUES (?, ?, ?)",
+                (user_id, positive, negative)
+            )
+        self.conn.commit()
+
+    def get_user_rating(self, user_id: int):
+        self.cursor.execute("SELECT positive, negative FROM user_ratings WHERE user_id = ?", (user_id,))
+        row = self.cursor.fetchone()
+        if row:
+            return {"positive": row["positive"], "negative": row["negative"]}
+        else:
+            return {"positive": 0, "negative": 0}
+
+    def get_last_rival(self, user_id: int):
+        self.cursor.execute("SELECT rival_id FROM last_rivals WHERE user_id = ?", (user_id,))
+        row = self.cursor.fetchone()
+        return row["rival_id"] if row else None
 
     def close(self):
         """Закрывает соединение с базой данных"""
