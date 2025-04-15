@@ -9,11 +9,10 @@ from aiogram.types import (
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
     BotCommand, 
-    MessageReactionUpdated,
-    ReactionTypeEmoji,
+    ParseMode,
     ChatMemberUpdated,
 )
-from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -31,7 +30,6 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
-# Middleware для проверки блокировки пользователя
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -50,7 +48,6 @@ async def handle_block(event: ChatMemberUpdated):
     if event.chat.type == ChatType.PRIVATE:
         user_id = event.from_user.id
         new_status = event.new_chat_member.status
-        
         if new_status == ChatMemberStatus.KICKED:
             db.block_user(user_id, permanent=True)
         elif new_status == ChatMemberStatus.MEMBER:
@@ -59,7 +56,6 @@ async def handle_block(event: ChatMemberUpdated):
 async def check_chats_task():
     while True:
         now = datetime.now()
-        # Проверка долгих поисков (больше 5 минут)
         long_searches = db.get_users_in_long_search(now - timedelta(minutes=5))
         for user in long_searches:
             db.stop_search(user['id'])
@@ -68,7 +64,6 @@ async def check_chats_task():
             except Exception:
                 pass
         
-        # Авторазблокировка пользователей
         expired_blocks = db.get_expired_blocks(now)
         for user in expired_blocks:
             db.unblock_user(user['id'])
@@ -91,22 +86,19 @@ def get_block_keyboard(user_id: int):
 
 @dp.callback_query(F.data == "report")
 async def handle_report(callback: CallbackQuery):
-    # Получаем id последнего собеседника для пользователя, который жалуется
+    # Берем последнего собеседника из БД, а не из статуса
     last_rival_id = db.get_last_rival(callback.from_user.id)
     if not last_rival_id:
         await callback.answer("❌ Не удалось определить собеседника для жалобы", show_alert=True)
         return
 
     messages = db.get_chat_log(callback.from_user.id, last_rival_id, limit=10)
-    if not messages:
-        await callback.answer("❌ Нет доступной истории для жалобы", show_alert=True)
-        return
+    log_text = "\n".join([f"{m['timestamp']} — {m['content']}" for m in reversed(messages)]) or "Пустой чат"
 
-    log_text = "\n".join([f"{m['timestamp']}: {m['content']}" for m in reversed(messages)])
     report_msg = (
         f"🚨 Жалоба от пользователя {callback.from_user.id}\n"
         f"На пользователя {last_rival_id}\n"
-        f"Лог чата:\n```\n{log_text}\n```"
+        f"Лог последних сообщений:\n```\n{log_text}\n```"
     )
     try:
         await bot.send_message(
@@ -116,11 +108,10 @@ async def handle_report(callback: CallbackQuery):
             reply_markup=get_block_keyboard(last_rival_id)
         )
         await callback.answer("✅ Жалоба отправлена")
-        await callback.message.edit_reply_markup()  # Убираем кнопки после жалобы
+        # Удаляем кнопки оценки и жалобы у пользователя
+        await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
-        await callback.answer("❌ Ошибка отправки жалобы")
-
-# Остальные обработчики без изменений...
+        await callback.answer("❌ Ошибка отправки жалобы", show_alert=True)
 
 @dp.callback_query(F.data.startswith("block_"))
 async def handle_block_action(callback: CallbackQuery):
@@ -149,10 +140,33 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
-# Добавьте сюда остальные обработчики и команды из вашего кода без изменений
-# ...
+# --- Остальные обработчики (start, search, stop, next, rate_good, rate_bad и т.д.) ---
+# Пример обработчика stop_command с кнопками оценки и жалобы:
 
-# Ниже пример обработчика рейтингов (если нужно)
+@dp.message(Command("stop"))
+async def stop_command(message: Message):
+    user = db.get_user_cursor(message.from_user.id)
+    if user and user.get("status") == 2:
+        rival_id = user["rid"]
+        db.stop_chat(message.from_user.id, rival_id)
+        
+        feedback_markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👍", callback_data="rate_good"),
+             InlineKeyboardButton(text="👎", callback_data="rate_bad")],
+            [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
+        ])
+        
+        for user_id in [message.from_user.id, rival_id]:
+            await bot.send_message(
+                user_id,
+                "Диалог завершен.\nОставьте мнение о собеседнике:\n"
+                f"<code>{'https://t.me/Anonchatyooubot'}</code>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=feedback_markup
+            )
+
+# Обработчики оценки (rate_good, rate_bad) берут last_rival из БД аналогично
+
 @dp.callback_query(F.data == "rate_good")
 async def handle_rate_good(callback: CallbackQuery):
     user = db.get_user_cursor(callback.from_user.id)
@@ -181,9 +195,7 @@ async def handle_rate_bad(callback: CallbackQuery):
     else:
         await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
 
-# Остальной ваш код (поиск, чат, сообщения и т.п.) остается без изменений
-
-# Функция проверки подписки, запуск бота и т.п.
+# --- Здесь остальные ваши обработчики без изменений ---
 
 async def is_subscribed(user_id: int) -> bool:
     try:
