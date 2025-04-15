@@ -1,6 +1,6 @@
 import asyncio
 import os
-import sqlite3
+from datetime import datetime, timedelta
 from aiogram import Bot, F, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import (
@@ -10,9 +10,11 @@ from aiogram.types import (
     InlineKeyboardMarkup, 
     BotCommand, 
     MessageReactionUpdated,
-    ReactionTypeEmoji
+    ReactionTypeEmoji,
+    ChatMemberUpdated,
+    ChatType
 )
-from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
+from aiogram.enums import ChatMemberStatus, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -28,18 +30,139 @@ bot = Bot(token)
 dp = Dispatcher()
 db = database("users.db")
 
-async def is_subscribed(user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id="@freedom346", user_id=user_id)
-        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
-    except Exception:
-        return False
+DEVELOPER_ID = 1040929628
+
+# Middleware для проверки блокировки пользователя
+class BlockedUserMiddleware:
+    async def __call__(self, handler, event: Message, data):
+        user = db.get_user_cursor(event.from_user.id)
+        if user:
+            now = datetime.now()
+            blocked_until = datetime.fromisoformat(user['blocked_until']) if user['blocked_until'] else None
+            if user['blocked'] or (blocked_until and blocked_until > now):
+                await event.answer("🚫 Вы заблокированы и не можете использовать бота!")
+                return
+        return await handler(event, data)
+
+dp.message.outer_middleware(BlockedUserMiddleware())
+
+@dp.my_chat_member()
+async def handle_block(event: ChatMemberUpdated):
+    if event.chat.type == ChatType.PRIVATE:
+        user_id = event.from_user.id
+        new_status = event.new_chat_member.status
+        
+        if new_status == ChatMemberStatus.KICKED:
+            db.block_user(user_id, permanent=True)
+        elif new_status == ChatMemberStatus.MEMBER:
+            db.unblock_user(user_id)
+
+async def check_chats_task():
+    while True:
+        now = datetime.now()
+        # Проверка долгих поисков (больше 5 минут)
+        long_searches = db.get_users_in_long_search(now - timedelta(minutes=5))
+        for user in long_searches:
+            db.stop_search(user['id'])
+            try:
+                await bot.send_message(user['id'], "❌ Поиск автоматически остановлен из-за долгого ожидания", reply_markup=online.builder("🔎 Найти чат"))
+            except Exception:
+                pass
+        
+        # Авторазблокировка пользователей
+        expired_blocks = db.get_expired_blocks(now)
+        for user in expired_blocks:
+            db.unblock_user(user['id'])
+        
+        await asyncio.sleep(180)
+
+def get_block_keyboard(user_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Навсегда", callback_data=f"block_forever_{user_id}"),
+            InlineKeyboardButton(text="Год", callback_data=f"block_year_{user_id}"),
+            InlineKeyboardButton(text="Месяц", callback_data=f"block_month_{user_id}")
+        ],
+        [
+            InlineKeyboardButton(text="Неделя", callback_data=f"block_week_{user_id}"),
+            InlineKeyboardButton(text="День", callback_data=f"block_day_{user_id}"),
+            InlineKeyboardButton(text="Игнорировать", callback_data=f"ignore_{user_id}")
+        ]
+    ])
+
+@dp.callback_query(F.data == "report")
+async def handle_report(callback: CallbackQuery):
+    user = db.get_user_cursor(callback.from_user.id)
+    if user and user['status'] == 2:
+        rival_id = user['rid']
+        messages = db.get_chat_log(callback.from_user.id, rival_id, limit=10)
+        log_text = "\n".join([f"{m['timestamp']}: {m['content']}" for m in reversed(messages)])
+        report_msg = (
+            f"🚨 Жалоба от пользователя {callback.from_user.id}\n"
+            f"На пользователя {rival_id}\n"
+            f"Лог чата:\n```\n{log_text}\n```"
+        )
+        try:
+            await bot.send_message(
+                DEVELOPER_ID,
+                report_msg,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_block_keyboard(rival_id)
+            )
+            await callback.answer("✅ Жалоба отправлена")
+        except Exception:
+            await callback.answer("❌ Ошибка отправки жалобы")
+
+@dp.callback_query(F.data.startswith("block_"))
+async def handle_block_action(callback: CallbackQuery):
+    parts = callback.data.split('_')
+    action = parts[1]
+    user_id = int(parts[2])
+    
+    durations = {
+        'forever': None,
+        'year': timedelta(days=365),
+        'month': timedelta(days=30),
+        'week': timedelta(weeks=1),
+        'day': timedelta(days=1)
+    }
+    
+    duration = durations.get(action)
+    block_until = datetime.now() + duration if duration else None
+    db.block_user(user_id, block_until=block_until)
+    
+    await callback.answer(f"✅ Пользователь {user_id} заблокирован")
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+@dp.callback_query(F.data.startswith("ignore_"))
+async def handle_ignore(callback: CallbackQuery):
+    user_id = int(callback.data.split('_')[1])
+    await callback.answer("🚫 Жалоба проигнорирована")
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+@dp.message(Command("dev"))
+async def dev_menu(message: Message):
+    if message.from_user.id == DEVELOPER_ID:
+        stats = {
+            "total_users": "N/A"
+        }
+        try:
+            db.cursor.execute("SELECT COUNT(*) FROM users")
+            stats["total_users"] = db.cursor.fetchone()[0]
+        except Exception:
+            pass
+        
+        await message.answer(
+            f"👨‍💻 Меню разработчика\n"
+            f"Пользователей в базе: {stats['total_users']}\n"
+            "Жалобы направляются сюда автоматически."
+        )
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
     try:
         user = db.get_user_cursor(message.from_user.id)
-    except sqlite3.OperationalError as e:
+    except Exception as e:
         if "no such column" in str(e):
             db._create_tables()
             db._migrate_database()
@@ -121,7 +244,6 @@ async def stop_command(message: Message):
             [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
-        # Отправляем сообщение обоим участникам
         for user_id in [message.from_user.id, rival_id]:
             await bot.send_message(
                 user_id,
@@ -177,7 +299,6 @@ async def next_command(message: Message):
             [InlineKeyboardButton(text="⚠️ Пожаловаться", callback_data="report")]
         ])
         
-        # Отправляем сообщение обоим участникам
         for user_id in [message.from_user.id, rival_id]:
             await bot.send_message(
                 user_id,
@@ -206,7 +327,7 @@ async def link_command(message: Message):
                 reply_markup=keyboard
             )
             await message.answer("✅ Ссылка отправлена!")
-        except Exception as e:
+        except Exception:
             await message.answer("❌ Ошибка отправки")
 
 @dp.message(F.text == "❌ Завершить поиск")
@@ -270,20 +391,34 @@ async def handler_message(message: Message):
                 db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
                 db.save_message_link(user["rid"], sent_msg.message_id, message.message_id)
 
+                # Сохраняем в историю сообщений для жалоб
+                content = message.text or message.caption or ''
+                db.save_message(message.from_user.id, user["rid"], content)
+
         except Exception as e:
             print(f"Ошибка пересылки сообщения: {e}")
+
+async def is_subscribed(user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id="@freedom346", user_id=user_id)
+        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+    except Exception:
+        return False
 
 async def on_startup(bot: Bot):
     await bot.set_webhook(f"{WEBHOOK_URL}/webhook")
 
 async def main():
+    asyncio.create_task(check_chats_task())
+    
     await bot.set_my_commands([
         BotCommand(command="/start", description="Начать поиск"),
         BotCommand(command="/stop", description="Закончить диалог"),
         BotCommand(command="/next", description="Новый собеседник"),
         BotCommand(command="/search", description="Начать поиск"),
         BotCommand(command="/link", description="Поделиться профилем"),
-        BotCommand(command="/interests", description="Настроить интересы")
+        BotCommand(command="/interests", description="Настроить интересы"),
+        BotCommand(command="/dev", description="Меню разработчика")
     ])
     
     app = web.Application()
