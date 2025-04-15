@@ -204,7 +204,6 @@ async def search_chat(message: Message):
     user = db.get_user_cursor(message.from_user.id)
     if user:
         rival = db.search(message.from_user.id)
-
         if not rival:
             await message.answer(
                 "🔎 Ищем собеседника...",
@@ -307,6 +306,44 @@ async def next_command(message: Message):
                 reply_markup=feedback_markup
             )
     await search_chat(message)
+
+@dp.callback_query(F.data == "rate_good")
+async def handle_rate_good(callback: CallbackQuery):
+    user = db.get_user_cursor(callback.from_user.id)
+    if user and user.get("status") == 0:
+        # Пользователь оценивает собеседника (который был в последнем чате)
+        rated_user_id = callback.from_user.id
+        # Получим id собеседника из последнего завершенного чата
+        # Для простоты считаем, что оцениваем собеседника из последнего чата
+        # Можно доработать, если нужно более точно
+        # Здесь просто добавим рейтинг пользователю, который оценивался
+        # Чтобы не усложнять, добавим рейтинг для пользователя, который оценивался (callback.from_user.id не меняется)
+        # Но лучше передавать id собеседника через callback_data, сейчас сделаем просто для callback.from_user.id
+        # Исправим: оценку ставит пользователь, а рейтинг изменяем у собеседника (из последнего диалога)
+        # Для этого нужно хранить в БД последний собеседник для пользователя
+        last_rival_id = db.get_last_rival(callback.from_user.id)
+        if last_rival_id:
+            db.add_rating(last_rival_id, 1)
+            await callback.answer("✅ Вы поставили положительную оценку")
+            await callback.message.edit_reply_markup()
+        else:
+            await callback.answer("❌ Не удалось определить собеседника для оценки", show_alert=True)
+    else:
+        await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
+
+@dp.callback_query(F.data == "rate_bad")
+async def handle_rate_bad(callback: CallbackQuery):
+    user = db.get_user_cursor(callback.from_user.id)
+    if user and user.get("status") == 0:
+        last_rival_id = db.get_last_rival(callback.from_user.id)
+        if last_rival_id:
+            db.add_rating(last_rival_id, -1)
+            await callback.answer("✅ Вы поставили негативную оценку")
+            await callback.message.edit_reply_markup()
+        else:
+            await callback.answer("❌ Не удалось определить собеседника для оценки", show_alert=True)
+    else:
+        await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
 
 @dp.message(Command("link"))
 async def link_command(message: Message):
