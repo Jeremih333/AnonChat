@@ -9,10 +9,9 @@ from aiogram.types import (
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
     BotCommand, 
-    ParseMode,
     ChatMemberUpdated,
 )
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -86,7 +85,6 @@ def get_block_keyboard(user_id: int):
 
 @dp.callback_query(F.data == "report")
 async def handle_report(callback: CallbackQuery):
-    # Берем последнего собеседника из БД, а не из статуса
     last_rival_id = db.get_last_rival(callback.from_user.id)
     if not last_rival_id:
         await callback.answer("❌ Не удалось определить собеседника для жалобы", show_alert=True)
@@ -108,7 +106,6 @@ async def handle_report(callback: CallbackQuery):
             reply_markup=get_block_keyboard(last_rival_id)
         )
         await callback.answer("✅ Жалоба отправлена")
-        # Удаляем кнопки оценки и жалобы у пользователя
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         await callback.answer("❌ Ошибка отправки жалобы", show_alert=True)
@@ -140,9 +137,6 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
-# --- Остальные обработчики (start, search, stop, next, rate_good, rate_bad и т.д.) ---
-# Пример обработчика stop_command с кнопками оценки и жалобы:
-
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
     user = db.get_user_cursor(message.from_user.id)
@@ -164,8 +158,6 @@ async def stop_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
-
-# Обработчики оценки (rate_good, rate_bad) берут last_rival из БД аналогично
 
 @dp.callback_query(F.data == "rate_good")
 async def handle_rate_good(callback: CallbackQuery):
@@ -194,8 +186,6 @@ async def handle_rate_bad(callback: CallbackQuery):
             await callback.answer("❌ Не удалось определить собеседника для оценки", show_alert=True)
     else:
         await callback.answer("❌ Оценивать можно только после завершения диалога", show_alert=True)
-
-# --- Здесь остальные ваши обработчики без изменений ---
 
 async def is_subscribed(user_id: int) -> bool:
     try:
