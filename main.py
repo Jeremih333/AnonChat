@@ -39,7 +39,12 @@ class BlockedUserMiddleware:
             now = datetime.now()
             blocked_until = datetime.fromisoformat(user['blocked_until']) if user['blocked_until'] else None
             if user['blocked'] or (blocked_until and blocked_until > now):
-                await event.answer("🚫 Вы заблокированы и не можете использовать бота!")
+                remaining_time = blocked_until - now if blocked_until else None
+                if remaining_time:
+                    remaining_minutes = remaining_time.total_seconds() // 60
+                    await event.answer(f"🚫 Вы заблокированы до {blocked_until.strftime('%Y-%m-%d %H:%M:%S')} (осталось {int(remaining_minutes)} минут)", show_alert=True)
+                else:
+                    await event.answer("🚫 Вы заблокированы навсегда!", show_alert=True)
                 return
         return await handler(event, data)
 
@@ -153,8 +158,16 @@ async def dev_menu(message: Message):
         await message.answer(
             f"👨‍💻 Меню разработчика\n"
             f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически."
+            "Жалобы направляются сюда автоматически.\n"
+            "Введите Telegram ID пользователя для разблокировки:"
         )
+
+@dp.message(F.text.regexp(r'^\d+$') & Command("unblock"))
+async def unblock_user(message: Message):
+    if message.from_user.id == DEVELOPER_ID:
+        user_id = int(message.text)
+        db.unblock_user(user_id)
+        await message.answer(f"✅ Пользователь {user_id} разблокирован.")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -211,11 +224,7 @@ async def change_gender_command(message: Message):
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
-    user = db.get_user_cursor(message.from_user.id)
-    if user and (user['gender'] is None or user['age'] is None):
-        await message.answer("❌ Пожалуйста, укажите ваш пол и возраст перед использованием этой команды.")
-    else:
-        await search_chat(message)
+    await search_chat(message)
 
 @dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
 async def block_links(message: Message):
@@ -293,11 +302,6 @@ async def stop_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
-    elif user and user.get("status") == 1:  # Если пользователь в поиске
-        db.stop_search(message.from_user.id)
-        await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
-    else:
-        await message.answer("❌ У вас нет активного поиска или диалога.")
 
 @dp.callback_query(F.data == "rate_good")
 async def handle_rate_good(callback: CallbackQuery):
