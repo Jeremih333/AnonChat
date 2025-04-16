@@ -134,7 +134,7 @@ class database:
         self.conn.commit()
 
     def search(self, user_id: int):
-        """Поиск подходящего собеседника с учетом рейтинга"""
+        """Поиск подходящего собеседника с учетом рейтинга и интересов"""
         current_user = self.get_user_cursor(user_id)
         if not current_user:
             return None
