@@ -10,6 +10,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     BotCommand,
     ChatMemberUpdated,
+    MessageReactionUpdated,  # Импортируем класс для обработки реакций
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -427,7 +428,7 @@ async def handle_reaction(event: MessageReactionUpdated):
                 return
 
             reaction = [
-                ReactionTypeEmoji(emoji=r.emoji)
+                r.emoji
                 for r in event.new_reaction
                 if r.type == "emoji"
             ]
