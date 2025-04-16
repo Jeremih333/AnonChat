@@ -19,7 +19,9 @@ class database:
                 interests TEXT DEFAULT '',
                 blocked BOOLEAN DEFAULT 0,
                 blocked_until TEXT DEFAULT NULL,
-                search_started TEXT DEFAULT NULL
+                search_started TEXT DEFAULT NULL,
+                gender TEXT DEFAULT NULL,
+                age INTEGER DEFAULT NULL
             )
         """)
         
@@ -91,6 +93,18 @@ class database:
                     ADD COLUMN search_started TEXT DEFAULT NULL
                 """)
                 self.conn.commit()
+            if 'gender' not in columns:
+                self.cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN gender TEXT DEFAULT NULL
+                """)
+                self.conn.commit()
+            if 'age' not in columns:
+                self.cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN age INTEGER DEFAULT NULL
+                """)
+                self.conn.commit()
         except sqlite3.Error as e:
             print(f"Migration error: {e}")
 
@@ -130,6 +144,22 @@ class database:
         self.cursor.execute(
             "INSERT OR IGNORE INTO users (id) VALUES (?)",
             (user_id,)
+        )
+        self.conn.commit()
+
+    def update_user_gender(self, user_id: int, gender: str):
+        """Обновляет пол пользователя"""
+        self.cursor.execute(
+            "UPDATE users SET gender = ? WHERE id = ?",
+            (gender, user_id)
+        )
+        self.conn.commit()
+
+    def update_user_age(self, user_id: int, age: int):
+        """Обновляет возраст пользователя"""
+        self.cursor.execute(
+            "UPDATE users SET age = ? WHERE id = ?",
+            (age, user_id)
         )
         self.conn.commit()
 
