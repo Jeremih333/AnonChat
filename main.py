@@ -39,12 +39,7 @@ class BlockedUserMiddleware:
             now = datetime.now()
             blocked_until = datetime.fromisoformat(user['blocked_until']) if user['blocked_until'] else None
             if user['blocked'] or (blocked_until and blocked_until > now):
-                remaining_time = blocked_until - now if blocked_until else None
-                if remaining_time:
-                    remaining_minutes = remaining_time.total_seconds() // 60
-                    await event.answer(f"🚫 Вы заблокированы до {blocked_until.strftime('%Y-%m-%d %H:%M:%S')} (осталось {int(remaining_minutes)} минут)", show_alert=True)
-                else:
-                    await event.answer("🚫 Вы заблокированы навсегда!", show_alert=True)
+                await event.answer("🚫 Вы заблокированы и не можете использовать бота!")
                 return
         return await handler(event, data)
 
@@ -158,16 +153,8 @@ async def dev_menu(message: Message):
         await message.answer(
             f"👨‍💻 Меню разработчика\n"
             f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически.\n"
-            "Введите Telegram ID пользователя для разблокировки:"
+            "Жалобы направляются сюда автоматически."
         )
-
-@dp.message(F.text.regexp(r'^\d+$') & Command("unblock"))  # Исправлено здесь
-async def unblock_user(message: Message):
-    if message.from_user.id == DEVELOPER_ID:
-        user_id = int(message.text)
-        db.unblock_user(user_id)
-        await message.answer(f"✅ Пользователь {user_id} разблокирован.")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -183,44 +170,13 @@ async def start_command(message: Message):
 
     if not user:
         db.new_user(message.from_user.id)
-        await ask_gender(message)
+        await message.answer(
+            "👥 Добро пожаловать в Анонимный Чат Бот!\n"
+            "🗣 Наш бот предоставляет возможность анонимного общения.",
+            reply_markup=online.builder("🔎 Найти чат")
+        )
     else:
-        if user['gender'] is None or user['age'] is None:
-            await ask_gender(message)
-        else:
-            await search_chat(message)
-
-async def ask_gender(message: Message):
-    gender_markup = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Мужской", callback_data="gender_male"),
-            InlineKeyboardButton(text="Женский", callback_data="gender_female")
-        ]
-    ])
-    await message.answer("Пожалуйста, выберите ваш пол:", reply_markup=gender_markup)
-
-@dp.callback_query(F.data.startswith("gender_"))
-async def handle_gender_selection(callback: CallbackQuery):
-    gender = "male" if callback.data == "gender_male" else "female"
-    db.update_user_gender(callback.from_user.id, gender)
-    await ask_age(callback.message)
-
-async def ask_age(message: Message):
-    await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
-
-@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))  # Исправлено здесь
-async def handle_age(message: Message):
-    age = int(message.text)
-    if 14 <= age <= 99:
-        db.update_user_age(message.from_user.id, age)
-        await message.answer("Спасибо! Вы успешно зарегистрированы.")
         await search_chat(message)
-    else:
-        await message.answer("Возраст должен быть от 14 до 99 лет. Пожалуйста, попробуйте снова.")
-
-@dp.message(Command("gender"))
-async def change_gender_command(message: Message):
-    await ask_gender(message)
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
@@ -393,7 +349,7 @@ async def link_command(message: Message):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
                     text="👤 Профиль собеседника",
-                    url=f"tg://user?id={user['rid']}"
+                    url=f"tg://user?id={message.from_user.id}"
                 )]
             ])
 
@@ -519,7 +475,6 @@ async def main():
         BotCommand(command="/search", description="Начать поиск"),
         BotCommand(command="/link", description="Поделиться профилем"),
         BotCommand(command="/interests", description="Настроить интересы"),
-        BotCommand(command="/gender", description="Изменить пол и возраст"),
         BotCommand(command="/dev", description="Меню разработчика")
     ])
 
