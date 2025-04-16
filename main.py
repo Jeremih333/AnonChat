@@ -162,7 +162,7 @@ async def dev_menu(message: Message):
             "Введите Telegram ID пользователя для разблокировки:"
         )
 
-@dp.message(F.text.regexp(r'^\d+) & Command("unblock"))  # Исправлено здесь
+@dp.message(F.text.regexp(r'^\d+$') & Command("unblock"))  # Исправлено здесь
 async def unblock_user(message: Message):
     if message.from_user.id == DEVELOPER_ID:
         user_id = int(message.text)
@@ -208,7 +208,7 @@ async def handle_gender_selection(callback: CallbackQuery):
 async def ask_age(message: Message):
     await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
 
-@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)))  # Исправлено здесь
+@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))  # Исправлено здесь
 async def handle_age(message: Message):
     age = int(message.text)
     if 14 <= age <= 99:
