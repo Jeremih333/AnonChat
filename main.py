@@ -211,7 +211,11 @@ async def change_gender_command(message: Message):
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
-    await search_chat(message)
+    user = db.get_user_cursor(message.from_user.id)
+    if user and (user['gender'] is None or user['age'] is None):
+        await message.answer("❌ Пожалуйста, укажите ваш пол и возраст перед использованием этой команды.")
+    else:
+        await search_chat(message)
 
 @dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
 async def block_links(message: Message):
@@ -289,6 +293,11 @@ async def stop_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
+    elif user and user.get("status") == 1:  # Если пользователь в поиске
+        db.stop_search(message.from_user.id)
+        await message.answer("✅ Поиск остановлен", reply_markup=online.builder("🔎 Найти чат"))
+    else:
+        await message.answer("❌ У вас нет активного поиска или диалога.")
 
 @dp.callback_query(F.data == "rate_good")
 async def handle_rate_good(callback: CallbackQuery):
