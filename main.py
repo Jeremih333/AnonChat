@@ -10,6 +10,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     BotCommand,
     ChatMemberUpdated,
+    MessageReactionUpdated,
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -159,12 +160,17 @@ async def dev_menu(message: Message):
             "Введите Telegram ID пользователя для разблокировки:"
         )
 
-@dp.message(F.text.regexp(r'^\d+$') & Command("unblock"))  # Исправлено здесь
+# Исправленный хендлер разблокировки
+@dp.message(F.text.regexp(r'^\d+$'))
 async def unblock_user(message: Message):
+    # Только для разработчика!
     if message.from_user.id == DEVELOPER_ID:
-        user_id = int(message.text)
-        db.unblock_user(user_id)
-        await message.answer(f"✅ Пользователь {user_id} разблокирован.")
+        try:
+            user_id = int(message.text)
+            db.unblock_user(user_id)
+            await message.answer(f"✅ Пользователь {user_id} разблокирован.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка разблокировки: {e}")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -205,7 +211,8 @@ async def handle_gender_selection(callback: CallbackQuery):
 async def ask_age(message: Message):
     await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
 
-@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))  # Исправлено здесь
+# Исправленный хендлер возраста
+@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))
 async def handle_age(message: Message):
     age = int(message.text)
     if 14 <= age <= 99:
