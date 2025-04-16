@@ -9,8 +9,9 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    ChatMemberUpdated,
     MessageReactionUpdated,
+    ReactionTypeEmoji,
+    ChatMemberUpdated,
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -30,9 +31,7 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
-# --- ВРЕМЕННОЕ ХРАНИЛИЩЕ ОЖИДАНИЯ ВВОДА ---
-user_states = {}
-
+# Middleware для проверки блокировки пользователя
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -163,15 +162,12 @@ async def dev_menu(message: Message):
             "Введите Telegram ID пользователя для разблокировки:"
         )
 
-@dp.message(F.text.regexp(r'^\d+$'))
+@dp.message(F.text.regexp(r'^\d+$') & Command("unblock"))  # Исправлено здесь
 async def unblock_user(message: Message):
     if message.from_user.id == DEVELOPER_ID:
-        try:
-            user_id = int(message.text)
-            db.unblock_user(user_id)
-            await message.answer(f"✅ Пользователь {user_id} разблокирован.")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка разблокировки: {e}")
+        user_id = int(message.text)
+        db.unblock_user(user_id)
+        await message.answer(f"✅ Пользователь {user_id} разблокирован.")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -195,7 +191,6 @@ async def start_command(message: Message):
             await search_chat(message)
 
 async def ask_gender(message: Message):
-    user_states[message.from_user.id] = {"awaiting": "gender"}
     gender_markup = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Мужской", callback_data="gender_male"),
@@ -208,18 +203,16 @@ async def ask_gender(message: Message):
 async def handle_gender_selection(callback: CallbackQuery):
     gender = "male" if callback.data == "gender_male" else "female"
     db.update_user_gender(callback.from_user.id, gender)
-    user_states[callback.from_user.id] = {"awaiting": "age"}
     await ask_age(callback.message)
 
 async def ask_age(message: Message):
     await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
 
-@dp.message(lambda message: user_states.get(message.from_user.id, {}).get("awaiting") == "age" and message.text and message.text.isdigit())
+@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))  # Исправлено здесь
 async def handle_age(message: Message):
     age = int(message.text)
     if 14 <= age <= 99:
         db.update_user_age(message.from_user.id, age)
-        user_states.pop(message.from_user.id, None)
         await message.answer("Спасибо! Вы успешно зарегистрированы.")
         await search_chat(message)
     else:
@@ -261,6 +254,7 @@ async def search_chat(message: Message):
                 reply_markup=online.builder("❌ Завершить поиск")
             )
         else:
+            # Уведомление о совпадении интересов
             interests_text = ""
             user_interests = set(user['interests'].split(',')) if isinstance(user['interests'], str) else user['interests']
             rival_interests = set(rival['interests'].split(',')) if isinstance(rival['interests'], str) else rival['interests']
@@ -314,7 +308,7 @@ async def handle_rate_good(callback: CallbackQuery):
     user_id = callback.from_user.id
     rival_id = db.get_last_rival(user_id)
     if rival_id:
-        db.add_rating(rival_id, 1)
+        db.add_rating(rival_id, 1)  # Добавляем положительный рейтинг
         await callback.answer("✅ Спасибо за положительную оценку!")
     else:
         await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
@@ -325,7 +319,7 @@ async def handle_rate_bad(callback: CallbackQuery):
     user_id = callback.from_user.id
     rival_id = db.get_last_rival(user_id)
     if rival_id:
-        db.add_rating(rival_id, -1)
+        db.add_rating(rival_id, -1)  # Добавляем отрицательный рейтинг
         await callback.answer("❌ Спасибо за отрицательную оценку!")
     else:
         await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
@@ -345,6 +339,7 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
+    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -357,6 +352,7 @@ async def interest_handler(callback: CallbackQuery):
         db.add_interest(callback.from_user.id, interest)
         await callback.answer(f"✅ Добавлен: {interest}")
 
+        # Удаляем сообщение с выбором интересов
         await callback.message.delete()
     except Exception:
         await callback.answer("❌ Ошибка обновления")
@@ -437,7 +433,7 @@ async def handle_reaction(event: MessageReactionUpdated):
                 return
 
             reaction = [
-                r.emoji
+                ReactionTypeEmoji(emoji=r.emoji)
                 for r in event.new_reaction
                 if r.type == "emoji"
             ]
