@@ -1,5 +1,3 @@
-# main.py
-
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -11,8 +9,6 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    MessageReactionUpdated,
-    ReactionTypeEmoji,
     ChatMemberUpdated,
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
@@ -33,7 +29,6 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
-# Middleware для проверки блокировки пользователя
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -256,7 +251,6 @@ async def search_chat(message: Message):
                 reply_markup=online.builder("❌ Завершить поиск")
             )
         else:
-            # Уведомление о совпадении интересов
             interests_text = ""
             user_interests = set(user['interests'].split(',')) if isinstance(user['interests'], str) else user['interests']
             rival_interests = set(rival['interests'].split(',')) if isinstance(rival['interests'], str) else rival['interests']
@@ -310,7 +304,7 @@ async def handle_rate_good(callback: CallbackQuery):
     user_id = callback.from_user.id
     rival_id = db.get_last_rival(user_id)
     if rival_id:
-        db.add_rating(rival_id, 1)  # Добавляем положительный рейтинг
+        db.add_rating(rival_id, 1)
         await callback.answer("✅ Спасибо за положительную оценку!")
     else:
         await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
@@ -321,7 +315,7 @@ async def handle_rate_bad(callback: CallbackQuery):
     user_id = callback.from_user.id
     rival_id = db.get_last_rival(user_id)
     if rival_id:
-        db.add_rating(rival_id, -1)  # Добавляем отрицательный рейтинг
+        db.add_rating(rival_id, -1)
         await callback.answer("❌ Спасибо за отрицательную оценку!")
     else:
         await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
@@ -353,7 +347,6 @@ async def interest_handler(callback: CallbackQuery):
         db.add_interest(callback.from_user.id, interest)
         await callback.answer(f"✅ Добавлен: {interest}")
 
-        # Удаляем сообщение с выбором интересов
         await callback.message.delete()
     except Exception:
         await callback.answer("❌ Ошибка обновления")
