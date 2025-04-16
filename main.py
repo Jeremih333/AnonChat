@@ -1,3 +1,5 @@
+# main.py
+
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -339,7 +341,6 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
-    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
