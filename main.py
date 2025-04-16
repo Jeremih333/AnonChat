@@ -170,13 +170,37 @@ async def start_command(message: Message):
 
     if not user:
         db.new_user(message.from_user.id)
-        await message.answer(
-            "👥 Добро пожаловать в Анонимный Чат Бот!\n"
-            "🗣 Наш бот предоставляет возможность анонимного общения.",
-            reply_markup=online.builder("🔎 Найти чат")
-        )
+        await ask_gender(message)
     else:
         await search_chat(message)
+
+async def ask_gender(message: Message):
+    gender_markup = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Мужской", callback_data="gender_male"),
+            InlineKeyboardButton(text="Женский", callback_data="gender_female")
+        ]
+    ])
+    await message.answer("Пожалуйста, выберите ваш пол:", reply_markup=gender_markup)
+
+@dp.callback_query(F.data.startswith("gender_"))
+async def handle_gender_selection(callback: CallbackQuery):
+    gender = "male" if callback.data == "gender_male" else "female"
+    db.update_user_gender(callback.from_user.id, gender)
+    await ask_age(callback.message)
+
+async def ask_age(message: Message):
+    await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
+
+@dp.message(F.text.regexp(r'^[1-9][0-9]?$|^1[0-9]$|^14$'))
+async def handle_age(message: Message):
+    age = int(message.text)
+    if 14 <= age <= 99:
+        db.update_user_age(message.from_user.id, age)
+        await message.answer("Спасибо! Вы успешно зарегистрированы.")
+        await search_chat(message)
+    else:
+        await message.answer("Возраст должен быть от 14 до 99 лет. Пожалуйста, попробуйте снова.")
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
