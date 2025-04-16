@@ -172,7 +172,10 @@ async def start_command(message: Message):
         db.new_user(message.from_user.id)
         await ask_gender(message)
     else:
-        await search_chat(message)
+        if user['gender'] is None or user['age'] is None:
+            await ask_gender(message)
+        else:
+            await search_chat(message)
 
 async def ask_gender(message: Message):
     gender_markup = InlineKeyboardMarkup(inline_keyboard=[
@@ -192,7 +195,7 @@ async def handle_gender_selection(callback: CallbackQuery):
 async def ask_age(message: Message):
     await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
 
-@dp.message(F.text.regexp(r'^[1-9][0-9]?$|^1[0-9]$|^14$'))
+@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))
 async def handle_age(message: Message):
     age = int(message.text)
     if 14 <= age <= 99:
@@ -201,6 +204,10 @@ async def handle_age(message: Message):
         await search_chat(message)
     else:
         await message.answer("Возраст должен быть от 14 до 99 лет. Пожалуйста, попробуйте снова.")
+
+@dp.message(Command("gender"))
+async def command_gender(message: Message):
+    await ask_gender(message)
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
@@ -499,6 +506,7 @@ async def main():
         BotCommand(command="/search", description="Начать поиск"),
         BotCommand(command="/link", description="Поделиться профилем"),
         BotCommand(command="/interests", description="Настроить интересы"),
+        BotCommand(command="/gender", description="Изменить пол и возраст"),
         BotCommand(command="/dev", description="Меню разработчика")
     ])
 
