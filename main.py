@@ -88,7 +88,6 @@ def get_block_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 @dp.callback_query(F.data == "report")
 async def handle_report(callback: CallbackQuery):
-    # Берём последнего собеседника из БД, а не из статуса
     last_rival_id = db.get_last_rival(callback.from_user.id)
     if not last_rival_id:
         await callback.answer("❌ Не удалось определить собеседника для жалобы", show_alert=True)
@@ -110,7 +109,6 @@ async def handle_report(callback: CallbackQuery):
             reply_markup=get_block_keyboard(last_rival_id)
         )
         await callback.answer("✅ Жалоба отправлена")
-        # Удаляем кнопки оценки и жалобы у пользователя
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         await callback.answer("❌ Ошибка отправки жалобы", show_alert=True)
@@ -212,9 +210,17 @@ async def search_chat(message: Message):
                 reply_markup=online.builder("❌ Завершить поиск")
             )
         else:
+            # Уведомление о совпадении интересов
+            interests_text = ""
+            user_interests = set(user['interests'].split(',')) if user['interests'] else set()
+            rival_interests = set(rival['interests'].split(',')) if rival['interests'] else set()
+            common_interests = user_interests & rival_interests
+            if common_interests:
+                interests_text = f" (интересы: {', '.join(common_interests)})"
+
             db.start_chat(message.from_user.id, rival["id"])
             text = (
-                "Собеседник найден 🐵\n"
+                f"Собеседник найден 🐵{interests_text}\n"
                 "/next — искать нового собеседника\n"
                 "/stop — закончить диалог\n"
                 "/interests — добавить интересы поиска\n\n"
@@ -253,6 +259,28 @@ async def stop_command(message: Message):
                 reply_markup=feedback_markup
             )
 
+@dp.callback_query(F.data == "rate_good")
+async def handle_rate_good(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    rival_id = db.get_last_rival(user_id)
+    if rival_id:
+        db.add_rating(rival_id, 1)  # Добавляем положительный рейтинг
+        await callback.answer("✅ Спасибо за положительную оценку!")
+    else:
+        await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+@dp.callback_query(F.data == "rate_bad")
+async def handle_rate_bad(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    rival_id = db.get_last_rival(user_id)
+    if rival_id:
+        db.add_rating(rival_id, -1)  # Добавляем отрицательный рейтинг
+        await callback.answer("❌ Спасибо за отрицательную оценку!")
+    else:
+        await callback.answer("❌ Не удалось найти собеседника для оценки.", show_alert=True)
+    await callback.message.edit_reply_markup(reply_markup=None)
+
 @dp.message(Command("interests"))
 async def interests_command(message: Message):
     interests = [
@@ -267,6 +295,7 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
+    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -278,6 +307,9 @@ async def interest_handler(callback: CallbackQuery):
     try:
         db.add_interest(callback.from_user.id, interest)
         await callback.answer(f"✅ Добавлен: {interest}")
+
+        # Удаляем сообщение с выбором интересов
+        await callback.message.delete()
     except Exception:
         await callback.answer("❌ Ошибка обновления")
 
