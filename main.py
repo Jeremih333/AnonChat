@@ -30,6 +30,9 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
+# --- ВРЕМЕННОЕ ХРАНИЛИЩЕ ОЖИДАНИЯ ВВОДА ---
+user_states = {}
+
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -160,10 +163,8 @@ async def dev_menu(message: Message):
             "Введите Telegram ID пользователя для разблокировки:"
         )
 
-# Исправленный хендлер разблокировки
 @dp.message(F.text.regexp(r'^\d+$'))
 async def unblock_user(message: Message):
-    # Только для разработчика!
     if message.from_user.id == DEVELOPER_ID:
         try:
             user_id = int(message.text)
@@ -194,6 +195,7 @@ async def start_command(message: Message):
             await search_chat(message)
 
 async def ask_gender(message: Message):
+    user_states[message.from_user.id] = {"awaiting": "gender"}
     gender_markup = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Мужской", callback_data="gender_male"),
@@ -206,17 +208,18 @@ async def ask_gender(message: Message):
 async def handle_gender_selection(callback: CallbackQuery):
     gender = "male" if callback.data == "gender_male" else "female"
     db.update_user_gender(callback.from_user.id, gender)
+    user_states[callback.from_user.id] = {"awaiting": "age"}
     await ask_age(callback.message)
 
 async def ask_age(message: Message):
     await message.answer("Пожалуйста, введите ваш возраст (от 14 до 99 лет):")
 
-# Исправленный хендлер возраста
-@dp.message(F.text.regexp(r'^(1[4-9]|[2-9][0-9]|99)$'))
+@dp.message(lambda message: user_states.get(message.from_user.id, {}).get("awaiting") == "age" and message.text and message.text.isdigit())
 async def handle_age(message: Message):
     age = int(message.text)
     if 14 <= age <= 99:
         db.update_user_age(message.from_user.id, age)
+        user_states.pop(message.from_user.id, None)
         await message.answer("Спасибо! Вы успешно зарегистрированы.")
         await search_chat(message)
     else:
