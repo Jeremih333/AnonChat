@@ -10,7 +10,6 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     BotCommand,
     ChatMemberUpdated,
-    MessageReactionUpdated,  # Импортируем класс для обработки реакций
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
