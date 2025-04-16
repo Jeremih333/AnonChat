@@ -212,8 +212,8 @@ async def search_chat(message: Message):
         else:
             # Уведомление о совпадении интересов
             interests_text = ""
-            user_interests = set(user['interests'].split(',')) if user['interests'] else set()
-            rival_interests = set(rival['interests'].split(',')) if rival['interests'] else set()
+            user_interests = set(user['interests'].split(',')) if isinstance(user['interests'], str) else user['interests']
+            rival_interests = set(rival['interests'].split(',')) if isinstance(rival['interests'], str) else rival['interests']
             common_interests = user_interests & rival_interests
             if common_interests:
                 interests_text = f" (интересы: {', '.join(common_interests)})"
