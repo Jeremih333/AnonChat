@@ -488,6 +488,27 @@ async def handler_message(message: Message):
                     message.sticker.file_id,
                     reply_to_message_id=reply_to_message_id
                 )
+            elif message.animation:  # Обработка GIF
+                sent_msg = await bot.send_animation(
+                    user["rid"],
+                    message.animation.file_id,
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.video:  # Обработка видео
+                sent_msg = await bot.send_video(
+                    user["rid"],
+                    message.video.file_id,
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
+            elif message.document:  # Обработка документов
+                sent_msg = await bot.send_document(
+                    user["rid"],
+                    message.document.file_id,
+                    caption=message.caption,
+                    reply_to_message_id=reply_to_message_id
+                )
 
             if sent_msg:
                 db.save_message_link(message.from_user.id, message.message_id, sent_msg.message_id)
