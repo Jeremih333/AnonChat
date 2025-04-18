@@ -140,6 +140,10 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
+# Проверка на доступность команд в группах
+async def is_private_chat(message: Message) -> bool:
+    return message.chat.type == ChatType.PRIVATE
+
 @dp.message(Command("dev"))
 async def dev_menu(message: Message):
     if message.from_user.id == DEVELOPER_ID:
@@ -158,6 +162,10 @@ async def dev_menu(message: Message):
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     try:
         user = db.get_user_cursor(message.from_user.id)
     except Exception as e:
@@ -180,6 +188,9 @@ async def start_command(message: Message):
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
     await search_chat(message)
 
 @dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
@@ -189,6 +200,10 @@ async def block_links(message: Message):
 
 @dp.message(F.text == "🔎 Найти чат")
 async def search_chat(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     if not await is_subscribed(message.from_user.id):
         subscribe_markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Подписаться", url="https://t.me/freedom346")],
@@ -231,14 +246,19 @@ async def search_chat(message: Message):
 
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription(callback: CallbackQuery):
-    if await is_subscribed(callback.from_user.id):
-        await callback.message.edit_text("✅ Спасибо за подписку! Теперь вы можете использовать бота.")
-        await search_chat(callback.message)
-    else:
-        await callback.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
+    if await is_private_chat(callback.message):
+        if await is_subscribed(callback.from_user.id):
+            await callback.message.edit_text("✅ Спасибо за подписку! Теперь вы можете использовать бота.")
+            await search_chat(callback.message)
+        else:
+            await callback.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
 
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         rival_id = user["rid"]
@@ -283,6 +303,10 @@ async def handle_rate_bad(callback: CallbackQuery):
 
 @dp.message(Command("interests"))
 async def interests_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     interests = [
         "Ролевые игры", "Одиночество", "Игры",
         "Аниме", "Мемы", "Флирт", "Музыка",
@@ -303,6 +327,10 @@ async def interests_command(message: Message):
 
 @dp.callback_query(F.data.startswith("interest_"))
 async def interest_handler(callback: CallbackQuery):
+    if not await is_private_chat(callback.message):
+        await callback.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     interest = callback.data.split("_", 1)[1]
     try:
         db.add_interest(callback.from_user.id, interest)
@@ -315,11 +343,19 @@ async def interest_handler(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "reset_interests")
 async def reset_interests(callback: CallbackQuery):
+    if not await is_private_chat(callback.message):
+        await callback.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     db.clear_interests(callback.from_user.id)
     await callback.answer("✅ Интересы сброшены")
 
 @dp.message(Command("next"))
 async def next_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         rival_id = user["rid"]
@@ -343,6 +379,10 @@ async def next_command(message: Message):
 
 @dp.message(Command("link"))
 async def link_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 2:
         try:
@@ -364,6 +404,10 @@ async def link_command(message: Message):
 
 @dp.message(F.text == "❌ Завершить поиск")
 async def stop_search(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
     user = db.get_user_cursor(message.from_user.id)
     if user and user.get("status") == 1:
         db.stop_search(message.from_user.id)
