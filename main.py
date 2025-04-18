@@ -274,6 +274,8 @@ async def stop_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
+    else:
+        await message.answer("✅ Диалог уже завершен.", reply_markup=online.builder("🔎 Найти чат"))
 
 @dp.callback_query(F.data == "rate_good")
 async def handle_rate_good(callback: CallbackQuery):
@@ -371,9 +373,12 @@ async def next_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
+        
+        # Убираем кнопку завершения диалога и показываем кнопку поиска
+        await message.answer("✅ Диалог завершен.", reply_markup=online.builder("🔎 Найти чат"))
     else:
         await message.answer("🔍 Начинаем поиск собеседника...")
-    await search_chat(message)
+        await search_chat(message)
 
 @dp.message(Command("link"))
 async def link_command(message: Message):
