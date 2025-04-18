@@ -147,22 +147,18 @@ async def is_private_chat(message: Message) -> bool:
 @dp.message(Command("dev"))
 async def dev_menu(message: Message):
     if message.from_user.id == DEVELOPER_ID:
-        await message.answer("👨‍💻 Меню разработчика. Введите ID пользователя для разблокировки.")
+        stats = {"total_users": "N/A"}
+        try:
+            db.cursor.execute("SELECT COUNT(*) FROM users")
+            stats["total_users"] = db.cursor.fetchone()[0]
+        except Exception:
+            pass
 
-@dp.message(F.text)
-async def unlock_user(message: Message):
-    if message.from_user.id == DEVELOPER_ID:
-        user_id = message.text.strip()
-        if user_id.isdigit():
-            user_id = int(user_id)
-            user = db.get_user_cursor(user_id)
-            if user and user['blocked']:
-                db.unblock_user(user_id)
-                await message.answer(f"✅ Пользователь с ID {user_id} разблокирован.")
-            else:
-                await message.answer("❌ Пользователь не найден или не заблокирован.")
-        else:
-            await message.answer("❌ Пожалуйста, введите корректный ID пользователя.")
+        await message.answer(
+            f"👨‍💻 Меню разработчика\n"
+            f"Пользователей в базе: {stats['total_users']}\n"
+            "Жалобы направляются сюда автоматически."
+        )
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
