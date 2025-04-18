@@ -166,15 +166,11 @@ async def start_command(message: Message):
         await message.answer("🚫 Команды бота недоступны в группах.")
         return
 
-    try:
-        user = db.get_user_cursor(message.from_user.id)
-    except Exception as e:
-        if "no such column" in str(e):
-            db._create_tables()
-            db._migrate_database()
-            user = None
-        else:
-            raise
+    user = db.get_user_cursor(message.from_user.id)
+    
+    if user and user.get("status") == 2:  # Проверка, находится ли пользователь в диалоге
+        await message.answer("❌ Вы уже находитесь в диалоге.")
+        return
 
     if not user:
         db.new_user(message.from_user.id)
@@ -375,6 +371,8 @@ async def next_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
+    else:
+        await message.answer("🔍 Начинаем поиск собеседника...")
     await search_chat(message)
 
 @dp.message(Command("link"))
