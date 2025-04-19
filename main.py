@@ -2,16 +2,17 @@ import asyncio
 import os
 from datetime import datetime, timedelta
 from aiogram import Bot, F, Dispatcher
-from aiogram.filters import Command, Text
+from aiogram.filters import Command
 from aiogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    ChatType,
+    ParseMode,
+    ChatMemberUpdated,
 )
-from aiogram.enums import ChatMemberStatus, ParseMode
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -29,7 +30,6 @@ db = database("users.db")
 
 DEVELOPER_ID = 1040929628
 
-# --- Middleware для проверки блокировки пользователя ---
 class BlockedUserMiddleware:
     async def __call__(self, handler, event: Message, data):
         user = db.get_user_cursor(event.from_user.id)
@@ -37,212 +37,11 @@ class BlockedUserMiddleware:
             now = datetime.now()
             blocked_until = datetime.fromisoformat(user['blocked_until']) if user['blocked_until'] else None
             if user['blocked'] or (blocked_until and blocked_until > now):
-                # При блокировке показываем сообщение с кнопкой "Подать Апелляцию"
-                appeal_kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Подать Апелляцию", callback_data="appeal_start")]
-                ])
-                await event.answer("🚫 Вы заблокированы и не можете использовать бота!", reply_markup=appeal_kb)
+                await event.answer("🚫 Вы заблокированы и не можете использовать бота!")
                 return
         return await handler(event, data)
 
 dp.message.outer_middleware(BlockedUserMiddleware())
-
-# --- Обработка меню /dev с новыми кнопками ---
-@dp.message(Command("dev"))
-async def dev_menu(message: Message):
-    if message.from_user.id != DEVELOPER_ID:
-        return
-    stats = {"total_users": "N/A"}
-    try:
-        db.cursor.execute("SELECT COUNT(*) FROM users")
-        stats["total_users"] = db.cursor.fetchone()[0]
-    except Exception:
-        pass
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Заблокированные пользователи", callback_data="dev_blocked_users")],
-        [InlineKeyboardButton(text="Разблокировать", callback_data="dev_unblock_prompt")]
-    ])
-
-    await message.answer(
-        f"👨‍💻 Меню разработчика\n"
-        f"Пользователей в базе: {stats['total_users']}\n"
-        "Жалобы направляются сюда автоматически.",
-        reply_markup=kb
-    )
-
-# --- Список заблокированных пользователей ---
-@dp.callback_query(F.data == "dev_blocked_users")
-async def show_blocked_users(callback: CallbackQuery):
-    if callback.from_user.id != DEVELOPER_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    blocked_users = db.get_all_blocked_users()
-    if not blocked_users:
-        await callback.answer("Нет заблокированных пользователей", show_alert=True)
-        return
-
-    lines = []
-    now = datetime.now()
-    for u in blocked_users:
-        uid = u['id']
-        until = u['blocked_until']
-        if until:
-            until_dt = datetime.fromisoformat(until)
-            remaining = until_dt - now
-            if remaining.total_seconds() > 0:
-                remain_str = str(remaining).split('.')[0]
-            else:
-                remain_str = "Истёк"
-        else:
-            remain_str = "Навсегда"
-        lines.append(f"ID: {uid} — Разблокировка: {remain_str}")
-
-    text = "🚫 Заблокированные пользователи:\n" + "\n".join(lines)
-    await callback.message.edit_text(text, reply_markup=None)
-    await callback.answer()
-
-# --- Запрос ID пользователя для разблокировки ---
-@dp.callback_query(F.data == "dev_unblock_prompt")
-async def unblock_prompt(callback: CallbackQuery):
-    if callback.from_user.id != DEVELOPER_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-    await callback.message.answer("Введите ID пользователя для разблокировки:")
-    await callback.answer()
-    # Устанавливаем флаг ожидания ID
-    dp.current_state(user=callback.from_user.id).set_state("waiting_unblock_id")
-
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-
-class DevUnblockStates(StatesGroup):
-    waiting_unblock_id = State()
-
-@dp.message(F.chat.type == ChatType.PRIVATE)
-async def unblock_id_handler(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state != "waiting_unblock_id":
-        return
-    if message.from_user.id != DEVELOPER_ID:
-        await message.answer("Доступ запрещён")
-        await state.clear()
-        return
-    try:
-        user_id = int(message.text.strip())
-    except ValueError:
-        await message.answer("Ошибка: ID должен быть числом. Попробуйте ещё раз.")
-        return
-
-    user = db.get_user_cursor(user_id)
-    if not user or not user['blocked']:
-        await message.answer("Пользователь с таким ID не найден или не заблокирован.")
-        await state.clear()
-        return
-
-    db.unblock_user(user_id)
-    await message.answer(f"✅ Пользователь {user_id} успешно разблокирован.")
-    await state.clear()
-
-# --- Обработка нажатия кнопки "Подать Апелляцию" у заблокированного пользователя ---
-@dp.callback_query(F.data == "appeal_start")
-async def appeal_start_handler(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.answer(
-        "📝 Вы можете написать апелляцию, объяснив, что вы не виноваты в блокировке.\n"
-        "Отправьте ваше сообщение, и оно будет направлено разработчику."
-    )
-    await dp.current_state(user=callback.from_user.id).set_state("waiting_appeal_text")
-
-class AppealStates(StatesGroup):
-    waiting_appeal_text = State()
-
-@dp.message(F.chat.type == ChatType.PRIVATE)
-async def appeal_text_handler(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state != "waiting_appeal_text":
-        return
-    # Отправляем апелляцию разработчику с кнопками
-    appeal_text = message.text.strip()
-    if not appeal_text:
-        await message.answer("Пустое сообщение. Пожалуйста, отправьте текст апелляции.")
-        return
-
-    appeal_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Ответить пользователю", callback_data=f"appeal_reply_{message.from_user.id}"),
-            InlineKeyboardButton(text="Разблокировать", callback_data=f"appeal_unblock_{message.from_user.id}"),
-            InlineKeyboardButton(text="Игнорировать", callback_data=f"appeal_ignore_{message.from_user.id}")
-        ]
-    ])
-
-    await bot.send_message(
-        DEVELOPER_ID,
-        f"📩 Апелляция от пользователя {message.from_user.id}:\n\n{appeal_text}",
-        reply_markup=appeal_kb
-    )
-    await message.answer("✅ Ваша апелляция отправлена разработчику.")
-    await state.clear()
-
-# --- Обработка кнопок апелляции у разработчика ---
-@dp.callback_query(F.data.startswith("appeal_"))
-async def appeal_action_handler(callback: CallbackQuery):
-    if callback.from_user.id != DEVELOPER_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    data = callback.data.split('_', 2)
-    action = data[1]
-    user_id = int(data[2])
-
-    if action == "reply":
-        await callback.message.answer(f"Введите ответ для пользователя {user_id}:")
-        await dp.current_state(user=callback.from_user.id).set_state(f"waiting_appeal_reply_{user_id}")
-        await callback.answer()
-
-    elif action == "unblock":
-        db.unblock_user(user_id)
-        await callback.answer(f"Пользователь {user_id} разблокирован.")
-        await callback.message.edit_reply_markup(reply_markup=None)
-
-    elif action == "ignore":
-        await callback.answer("Апелляция проигнорирована")
-        await callback.message.edit_reply_markup(reply_markup=None)
-
-# --- Обработка ввода ответа разработчика на апелляцию ---
-@dp.message(F.chat.type == ChatType.PRIVATE)
-async def appeal_reply_handler(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    if not current_state or not current_state.startswith("waiting_appeal_reply_"):
-        return
-    if message.from_user.id != DEVELOPER_ID:
-        await message.answer("Доступ запрещён")
-        await state.clear()
-        return
-
-    user_id = int(current_state.split('_')[-1])
-    reply_text = message.text.strip()
-    if not reply_text:
-        await message.answer("Пустое сообщение. Пожалуйста, введите текст ответа.")
-        return
-
-    try:
-        await bot.send_message(user_id, f"📬 Ответ от разработчика:\n{reply_text}")
-        await message.answer(f"✅ Ответ отправлен пользователю {user_id}.")
-    except Exception:
-        await message.answer("❌ Не удалось отправить сообщение пользователю.")
-    await state.clear()
-
-# --- Добавление метода в database.py для получения всех заблокированных ---
-def get_all_blocked_users(self):
-    self.cursor.execute("SELECT * FROM users WHERE blocked = 1")
-    return [dict(row) for row in self.cursor.fetchall()]
-
-# Добавляем в класс database:
-setattr(database, "get_all_blocked_users", get_all_blocked_users)
-
-# --- Остальной ваш код без изменений ---
 
 @dp.my_chat_member()
 async def handle_block(event: ChatMemberUpdated):
@@ -330,7 +129,7 @@ async def handle_block_action(callback: CallbackQuery):
     block_until = datetime.now() + duration if duration else None
     db.block_user(user_id, block_until=block_until)
 
-    await callback.answer(f"✅ Пользователь {user_id} заблокирован")
+    await callback.answer(f"✅ Пользователь {user_id} заблокирован до {block_until if block_until else 'бессрочно'}")
     await callback.message.edit_reply_markup(reply_markup=None)
 
 @dp.callback_query(F.data.startswith("ignore_"))
@@ -339,9 +138,62 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
-# Проверка на доступность команд в группах
-async def is_private_chat(message: Message) -> bool:
-    return message.chat.type == ChatType.PRIVATE
+@dp.message(Command("dev"))
+async def dev_menu(message: Message):
+    if message.from_user.id == DEVELOPER_ID:
+        blocked_users = db.get_blocked_users()
+        blocked_list = "\n".join([f"ID: {user['id']}, Заблокирован до: {user['blocked_until']}" for user in blocked_users]) or "Нет заблокированных пользователей."
+        
+        await message.answer(
+            f"👨‍💻 Меню разработчика\n"
+            f"Заблокированные пользователи:\n{blocked_list}\n"
+            "Жалобы направляются сюда автоматически."
+        )
+
+@dp.callback_query(F.data == "appeal")
+async def handle_appeal(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await bot.send_message(user_id, "📝 Пожалуйста, напишите вашу апелляцию:")
+    await callback.answer()
+
+@dp.message(F.text)
+async def handle_appeal_message(message: Message):
+    user_id = message.from_user.id
+    user = db.get_user_cursor(user_id)
+    if user and user['blocked']:
+        db.save_appeal(user_id, message.text)
+        await bot.send_message(DEVELOPER_ID, f"📩 Апелляция от пользователя {user_id}: {message.text}\n"
+                                              f"Кнопки: [Ответить пользователю] [Разблокировать] [Игнорировать]",
+                               reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                   [InlineKeyboardButton(text="Ответить пользователю", callback_data=f"reply_{user_id}")],
+                                   [InlineKeyboardButton(text="Разблокировать", callback_data=f"unblock_{user_id}")],
+                                   [InlineKeyboardButton(text="Игнорировать", callback_data=f"ignore_appeal_{user_id}")]
+                               ]))
+        await message.answer("✅ Ваша апелляция отправлена разработчику.")
+    else:
+        await message.answer("🚫 Вы не можете отправить апелляцию, так как не заблокированы.")
+
+@dp.callback_query(F.data.startswith("unblock_"))
+async def handle_unblock(callback: CallbackQuery):
+    user_id = int(callback.data.split('_')[1])
+    db.unblock_user(user_id)
+    await callback.answer(f"✅ Пользователь {user_id} разблокирован.")
+    await bot.send_message(user_id, "🎉 Вы были разблокированы!")
+
+@dp.callback_query(F.data.startswith("reply_"))
+async def handle_reply(callback: CallbackQuery):
+    user_id = int(callback.data.split('_')[1])
+    await bot.send_message(user_id, "✉️ Вы получили ответ от разработчика. Пожалуйста, напишите свой ответ:")
+    await callback.answer()
+
+@dp.message(F.text)
+async def handle_developer_reply(message: Message):
+    user_id = message.from_user.id
+    if user_id == DEVELOPER_ID:
+        # Здесь можно обработать ответ от разработчика
+        await message.answer("✅ Ответ отправлен пользователю.")
+    else:
+        await message.answer("🚫 Вы не можете отправить ответ разработчику.")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -404,7 +256,6 @@ async def search_chat(message: Message):
                 reply_markup=online.builder("❌ Завершить поиск")
             )
         else:
-            # Уведомление о совпадении интересов
             interests_text = ""
             user_interests = set(user['interests'].split(',')) if isinstance(user['interests'], str) else user['interests']
             rival_interests = set(rival['interests'].split(',')) if isinstance(rival['interests'], str) else rival['interests']
@@ -500,7 +351,6 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
-    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -516,8 +366,6 @@ async def interest_handler(callback: CallbackQuery):
     try:
         db.add_interest(callback.from_user.id, interest)
         await callback.answer(f"✅ Добавлен: {interest}")
-
-        # Удаляем сообщение с выбором интересов
         await callback.message.delete()
     except Exception:
         await callback.answer("❌ Ошибка обновления")
@@ -557,7 +405,6 @@ async def next_command(message: Message):
                 reply_markup=feedback_markup
             )
         
-        # Убираем кнопку завершения диалога и показываем кнопку поиска
         await message.answer("✅ Диалог завершен.", reply_markup=online.builder("🔎 Найти чат"))
     else:
         await message.answer("🔍 Начинаем поиск собеседника...")
