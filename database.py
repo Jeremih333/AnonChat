@@ -42,6 +42,7 @@ class database:
             )
         """)
         
+        # Таблица для рейтингов пользователей
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_ratings (
                 user_id INTEGER PRIMARY KEY,
@@ -50,19 +51,11 @@ class database:
             )
         """)
         
+        # Таблица для хранения последнего собеседника для оценки/жалоб
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS last_rivals (
                 user_id INTEGER PRIMARY KEY,
                 rival_id INTEGER
-            )
-        """)
-        
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS appeals (
-                user_id INTEGER,
-                appeal_text TEXT,
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY(user_id)
             )
         """)
         
@@ -101,6 +94,7 @@ class database:
         except sqlite3.Error as e:
             print(f"Migration error: {e}")
 
+        # Создать таблицы рейтингов и last_rivals, если их нет (для обновления старых баз)
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_ratings (
                 user_id INTEGER PRIMARY KEY,
@@ -163,10 +157,12 @@ class database:
             c_id, c_interests = candidate['id'], candidate['interests']
             candidate_interests = set(c_interests.split(',')) if c_interests else set()
 
+            # Получаем рейтинг кандидата
             c_rating = self.get_user_rating(c_id)
             c_pos = c_rating['positive']
             c_neg = c_rating['negative']
 
+            # Фильтр по интересам
             if not user_interests or user_interests & candidate_interests:
                 candidates.append({
                     "id": c_id,
@@ -175,13 +171,17 @@ class database:
                     "negative": c_neg
                 })
 
+        # Сортируем кандидатов с учетом рейтинга и пересечения интересов:
+        # 1) Чем больше совпадений интересов - выше
+        # 2) Пользователи с >=5 негативными рейтингами идут в конец
+        # 3) Пользователи с >=5 положительными рейтингами идут в начало
         def sort_key(c):
             interest_score = len(user_interests & c['interests'])
             rating_score = 0
             if c['negative'] >= 5:
-                rating_score -= 1000
+                rating_score -= 1000  # очень низкий приоритет
             if c['positive'] >= 5:
-                rating_score += 1000
+                rating_score += 1000  # очень высокий приоритет
             return (rating_score, interest_score)
 
         candidates.sort(key=sort_key, reverse=True)
@@ -194,6 +194,7 @@ class database:
             "UPDATE users SET status = 2, rid = ?, search_started = NULL WHERE id = ?",
             [(rival_id, user_id), (user_id, rival_id)]
         )
+        # Сохраняем в last_rivals для оценки и жалоб после окончания
         self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (user_id, rival_id))
         self.cursor.execute("INSERT OR REPLACE INTO last_rivals (user_id, rival_id) VALUES (?, ?)", (rival_id, user_id))
         self.conn.commit()
@@ -364,19 +365,6 @@ class database:
         self.cursor.execute("SELECT rival_id FROM last_rivals WHERE user_id = ?", (user_id,))
         row = self.cursor.fetchone()
         return row["rival_id"] if row else None
-
-    def save_appeal(self, user_id: int, appeal_text: str):
-        """Сохраняет апелляцию пользователя"""
-        self.cursor.execute(
-            "INSERT OR REPLACE INTO appeals (user_id, appeal_text) VALUES (?, ?)",
-            (user_id, appeal_text)
-        )
-        self.conn.commit()
-
-    def get_blocked_users(self):
-        """Возвращает список заблокированных пользователей"""
-        self.cursor.execute("SELECT id, blocked_until FROM users WHERE blocked = 1")
-        return [dict(row) for row in self.cursor.fetchall()]
 
     def close(self):
         """Закрывает соединение с базой данных"""
