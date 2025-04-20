@@ -9,10 +9,9 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    ParseMode,
     ChatMemberUpdated,
 )
-from aiogram.enums import ChatMemberStatus, ChatType
+from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -64,11 +63,11 @@ async def check_chats_task():
                 await bot.send_message(user['id'], "❌ Поиск автоматически остановлен из-за долгого ожидания", reply_markup=online.builder("🔎 Найти чат"))
             except Exception:
                 pass
-        
+
         expired_blocks = db.get_expired_blocks(now)
         for user in expired_blocks:
             db.unblock_user(user['id'])
-        
+
         await asyncio.sleep(180)
 
 def get_block_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -153,6 +152,16 @@ async def dev_menu(message: Message):
         except Exception:
             pass
 
+        blocked_users = db.get_blocked_users()
+        blocked_users_text = "\n".join([f"ID: {user['id']}, Blocked Until: {user['blocked_until']}" for user in blocked_users])
+
+        await message.answer(
+            f"👨‍💻 Меню разработчика\n"
+            f"Пользователей в базе: {stats['total_users']}\n"
+            "Жалобы направляются сюда автоматически.\n"
+            f"Заблокированные пользователи:\n{blocked_users_text}"
+        )
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="Заблокированные пользователи", callback_data="view_blocked_users"),
@@ -160,12 +169,26 @@ async def dev_menu(message: Message):
             ]
         ])
 
-        await message.answer(
-            f"👨‍💻 Меню разработчика\n"
-            f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически.",
-            reply_markup=keyboard
-        )
+        await message.answer("Выберите действие:", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "view_blocked_users")
+async def view_blocked_users(callback: CallbackQuery):
+    blocked_users = db.get_blocked_users()
+    blocked_users_text = "\n".join([f"ID: {user['id']}, Blocked Until: {user['blocked_until']}" for user in blocked_users])
+
+    await callback.message.answer(f"Заблокированные пользователи:\n{blocked_users_text}")
+
+@dp.callback_query(F.data == "unblock_user")
+async def unblock_user(callback: CallbackQuery):
+    await callback.message.answer("Введите ID пользователя для разблокировки:")
+    dp.current_state[callback.from_user.id] = "waiting_for_unblock_id"
+
+@dp.message(lambda message: dp.current_state.get(message.from_user.id) == "waiting_for_unblock_id")
+async def process_unblock_id(message: Message):
+    user_id = int(message.text)
+    db.unblock_user(user_id)
+    await message.answer(f"Пользователь {user_id} разблокирован.")
+    dp.current_state[message.from_user.id] = None
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -174,7 +197,7 @@ async def start_command(message: Message):
         return
 
     user = db.get_user_cursor(message.from_user.id)
-    
+
     if user and user.get("status") == 2:  # Проверка, находится ли пользователь в диалоге
         await message.answer("❌ Вы уже находитесь в диалоге.")
         return
@@ -324,6 +347,7 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
+    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -379,7 +403,8 @@ async def next_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
-        
+
+        # Убираем кнопку завершения диалога и показываем кнопку поиска
         await message.answer("✅ Диалог завершен.", reply_markup=online.builder("🔎 Найти чат"))
     else:
         await message.answer("🔍 Начинаем поиск собеседника...")
@@ -426,6 +451,33 @@ async def stop_search(message: Message):
 @dp.message(F.text == "❌ Завершить диалог")
 async def stop_chat(message: Message):
     await stop_command(message)
+
+@dp.message_reaction()
+async def handle_reaction(event: MessageReactionUpdated):
+    if event.old_reaction == event.new_reaction:
+        return
+
+    user = db.get_user_cursor(event.user.id)
+    if user and user.get("status") == 2 and event.new_reaction:
+        rival_id = user["rid"]
+        try:
+            original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
+            if not original_msg_id:
+                return
+
+            reaction = [
+                ReactionTypeEmoji(emoji=r.emoji)
+                for r in event.new_reaction
+                if r.type == "emoji"
+            ]
+
+            await bot.set_message_reaction(
+                chat_id=rival_id,
+                message_id=original_msg_id,
+                reaction=reaction
+            )
+        except Exception as e:
+            print(f"Ошибка обработки реакции: {e}")
 
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
