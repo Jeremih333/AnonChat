@@ -170,12 +170,14 @@ async def view_blocked_users(callback: CallbackQuery):
 @dp.callback_query(F.data == "unblock_user")
 async def unblock_user(callback: CallbackQuery):
     await callback.answer("Введите ID пользователя для разблокировки:")
-    dp.register_message_handler(handle_unblock_user, state="unblock_user")
+    dp.current_state(user=callback.from_user.id).set_state("unblock_user")
 
+@dp.message(F.state("unblock_user"))
 async def handle_unblock_user(message: Message):
     user_id = int(message.text)
     db.unblock_user(user_id)
     await message.answer(f"✅ Пользователь {user_id} разблокирован.")
+    await dp.current_state(user=message.from_user.id).reset_state()
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
