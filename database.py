@@ -366,11 +366,6 @@ class database:
         row = self.cursor.fetchone()
         return row["rival_id"] if row else None
 
-    def get_blocked_users(self):
-        """Возвращает список заблокированных пользователей"""
-        self.cursor.execute("SELECT id, blocked_until FROM users WHERE blocked = 1")
-        return [dict(row) for row in self.cursor.fetchall()]
-
     def close(self):
         """Закрывает соединение с базой данных"""
         self.conn.close()
