@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 class database:
     def __init__(self, db_name: str):
@@ -22,7 +22,7 @@ class database:
                 search_started TEXT DEFAULT NULL
             )
         """)
-        
+
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS message_links (
                 user_id INTEGER,
@@ -31,7 +31,7 @@ class database:
                 PRIMARY KEY(user_id, message_id)
             )
         """)
-        
+
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +41,7 @@ class database:
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Таблица для рейтингов пользователей
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_ratings (
@@ -50,7 +50,7 @@ class database:
                 negative INTEGER DEFAULT 0
             )
         """)
-        
+
         # Таблица для хранения последнего собеседника для оценки/жалоб
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS last_rivals (
@@ -58,7 +58,7 @@ class database:
                 rival_id INTEGER
             )
         """)
-        
+
         self.conn.commit()
 
     def _migrate_database(self):
@@ -66,28 +66,28 @@ class database:
         try:
             self.cursor.execute("PRAGMA table_info(users)")
             columns = [column[1] for column in self.cursor.fetchall()]
-            
+
             if 'interests' not in columns:
                 self.cursor.execute("""
-                    ALTER TABLE users 
+                    ALTER TABLE users
                     ADD COLUMN interests TEXT DEFAULT ''
                 """)
                 self.conn.commit()
             if 'blocked' not in columns:
                 self.cursor.execute("""
-                    ALTER TABLE users 
+                    ALTER TABLE users
                     ADD COLUMN blocked BOOLEAN DEFAULT 0
                 """)
                 self.conn.commit()
             if 'blocked_until' not in columns:
                 self.cursor.execute("""
-                    ALTER TABLE users 
+                    ALTER TABLE users
                     ADD COLUMN blocked_until TEXT DEFAULT NULL
                 """)
                 self.conn.commit()
             if 'search_started' not in columns:
                 self.cursor.execute("""
-                    ALTER TABLE users 
+                    ALTER TABLE users
                     ADD COLUMN search_started TEXT DEFAULT NULL
                 """)
                 self.conn.commit()
@@ -172,6 +172,9 @@ class database:
                 })
 
         # Сортируем кандидатов с учетом рейтинга и пересечения интересов:
+        # 1) Чем больше совпадений интересов - выше
+        # 2) Пользователи с >=5 негативными рейтингами идут в конец
+        # 3) Пользователи с >=5 положительными рейтингами идут в начало
         def sort_key(c):
             interest_score = len(user_interests & c['interests'])
             rating_score = 0
@@ -320,7 +323,7 @@ class database:
 
     def get_chat_log(self, user1_id: int, user2_id: int, limit=10):
         self.cursor.execute('''
-            SELECT * FROM messages 
+            SELECT * FROM messages
             WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
             ORDER BY timestamp DESC LIMIT ?
         ''', (user1_id, user2_id, user2_id, user1_id, limit))
@@ -362,6 +365,11 @@ class database:
         self.cursor.execute("SELECT rival_id FROM last_rivals WHERE user_id = ?", (user_id,))
         row = self.cursor.fetchone()
         return row["rival_id"] if row else None
+
+    def get_blocked_users(self):
+        """Возвращает список заблокированных пользователей"""
+        self.cursor.execute("SELECT * FROM users WHERE blocked = 1")
+        return [dict(row) for row in self.cursor.fetchall()]
 
     def close(self):
         """Закрывает соединение с базой данных"""
