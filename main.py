@@ -147,37 +147,18 @@ async def is_private_chat(message: Message) -> bool:
 @dp.message(Command("dev"))
 async def dev_menu(message: Message):
     if message.from_user.id == DEVELOPER_ID:
-        blocked_users = db.get_blocked_users()
-        blocked_list = "\n".join([f"ID: {user['id']} - Разблокировка: {user['blocked_until']}" for user in blocked_users]) or "Нет заблокированных пользователей."
-        
+        stats = {"total_users": "N/A"}
+        try:
+            db.cursor.execute("SELECT COUNT(*) FROM users")
+            stats["total_users"] = db.cursor.fetchone()[0]
+        except Exception:
+            pass
+
         await message.answer(
             f"👨‍💻 Меню разработчика\n"
-            f"Заблокированные пользователи:\n{blocked_list}\n"
-            "Жалобы направляются сюда автоматически.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Заблокированные пользователи", callback_data="view_blocked_users")],
-                [InlineKeyboardButton(text="Разблокировать", callback_data="unblock_user")]
-            ])
+            f"Пользователей в базе: {stats['total_users']}\n"
+            "Жалобы направляются сюда автоматически."
         )
-
-@dp.callback_query(F.data == "view_blocked_users")
-async def view_blocked_users(callback: CallbackQuery):
-    blocked_users = db.get_blocked_users()
-    blocked_list = "\n".join([f"ID: {user['id']} - Разблокировка: {user['blocked_until']}" for user in blocked_users]) or "Нет заблокированных пользователей."
-    await callback.message.answer(f"Заблокированные пользователи:\n{blocked_list}")
-    await callback.answer()
-
-@dp.callback_query(F.data == "unblock_user")
-async def unblock_user(callback: CallbackQuery):
-    await callback.answer("Введите ID пользователя для разблокировки:")
-    dp.current_state(user=callback.from_user.id).set_state("unblock_user")
-
-@dp.message(F.state("unblock_user"))
-async def handle_unblock_user(message: Message):
-    user_id = int(message.text)
-    db.unblock_user(user_id)
-    await message.answer(f"✅ Пользователь {user_id} разблокирован.")
-    await dp.current_state(user=message.from_user.id).reset_state()
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
