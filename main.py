@@ -9,11 +9,10 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
-    MessageReactionUpdated,
-    ReactionTypeEmoji,
+    ParseMode,
     ChatMemberUpdated,
 )
-from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from database import database
@@ -154,10 +153,18 @@ async def dev_menu(message: Message):
         except Exception:
             pass
 
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Заблокированные пользователи", callback_data="view_blocked_users"),
+                InlineKeyboardButton(text="Разблокировать", callback_data="unblock_user")
+            ]
+        ])
+
         await message.answer(
             f"👨‍💻 Меню разработчика\n"
             f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически."
+            "Жалобы направляются сюда автоматически.",
+            reply_markup=keyboard
         )
 
 @dp.message(Command("start"))
@@ -317,7 +324,6 @@ async def interests_command(message: Message):
     ]
     buttons.append([InlineKeyboardButton(text="❌ Сбросить интересы", callback_data="reset_interests")])
 
-    # Удаляем предыдущее сообщение с интересами, если оно есть
     await message.answer(
         "Выберите ваши интересы для поиска:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -374,7 +380,6 @@ async def next_command(message: Message):
                 reply_markup=feedback_markup
             )
         
-        # Убираем кнопку завершения диалога и показываем кнопку поиска
         await message.answer("✅ Диалог завершен.", reply_markup=online.builder("🔎 Найти чат"))
     else:
         await message.answer("🔍 Начинаем поиск собеседника...")
@@ -421,33 +426,6 @@ async def stop_search(message: Message):
 @dp.message(F.text == "❌ Завершить диалог")
 async def stop_chat(message: Message):
     await stop_command(message)
-
-@dp.message_reaction()
-async def handle_reaction(event: MessageReactionUpdated):
-    if event.old_reaction == event.new_reaction:
-        return
-
-    user = db.get_user_cursor(event.user.id)
-    if user and user.get("status") == 2 and event.new_reaction:
-        rival_id = user["rid"]
-        try:
-            original_msg_id = db.get_rival_message_id(event.user.id, event.message_id)
-            if not original_msg_id:
-                return
-
-            reaction = [
-                ReactionTypeEmoji(emoji=r.emoji)
-                for r in event.new_reaction
-                if r.type == "emoji"
-            ]
-
-            await bot.set_message_reaction(
-                chat_id=rival_id,
-                message_id=original_msg_id,
-                reaction=reaction
-            )
-        except Exception as e:
-            print(f"Ошибка обработки реакции: {e}")
 
 @dp.message(F.chat.type == ChatType.PRIVATE)
 async def handler_message(message: Message):
