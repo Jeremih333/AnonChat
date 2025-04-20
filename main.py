@@ -9,6 +9,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     BotCommand,
+    MessageReactionUpdated,
+    ReactionTypeEmoji,
     ChatMemberUpdated,
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
@@ -63,11 +65,11 @@ async def check_chats_task():
                 await bot.send_message(user['id'], "❌ Поиск автоматически остановлен из-за долгого ожидания", reply_markup=online.builder("🔎 Найти чат"))
             except Exception:
                 pass
-
+        
         expired_blocks = db.get_expired_blocks(now)
         for user in expired_blocks:
             db.unblock_user(user['id'])
-
+        
         await asyncio.sleep(180)
 
 def get_block_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -145,50 +147,35 @@ async def is_private_chat(message: Message) -> bool:
 @dp.message(Command("dev"))
 async def dev_menu(message: Message):
     if message.from_user.id == DEVELOPER_ID:
-        stats = {"total_users": "N/A"}
-        try:
-            db.cursor.execute("SELECT COUNT(*) FROM users")
-            stats["total_users"] = db.cursor.fetchone()[0]
-        except Exception:
-            pass
-
         blocked_users = db.get_blocked_users()
-        blocked_users_text = "\n".join([f"ID: {user['id']}, Blocked Until: {user['blocked_until']}" for user in blocked_users])
-
+        blocked_list = "\n".join([f"ID: {user['id']} - Разблокировка: {user['blocked_until']}" for user in blocked_users]) or "Нет заблокированных пользователей."
+        
         await message.answer(
             f"👨‍💻 Меню разработчика\n"
-            f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически.\n"
-            f"Заблокированные пользователи:\n{blocked_users_text}"
+            f"Заблокированные пользователи:\n{blocked_list}\n"
+            "Жалобы направляются сюда автоматически.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Заблокированные пользователи", callback_data="view_blocked_users")],
+                [InlineKeyboardButton(text="Разблокировать", callback_data="unblock_user")]
+            ])
         )
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Заблокированные пользователи", callback_data="view_blocked_users"),
-                InlineKeyboardButton(text="Разблокировать", callback_data="unblock_user")
-            ]
-        ])
-
-        await message.answer("Выберите действие:", reply_markup=keyboard)
 
 @dp.callback_query(F.data == "view_blocked_users")
 async def view_blocked_users(callback: CallbackQuery):
     blocked_users = db.get_blocked_users()
-    blocked_users_text = "\n".join([f"ID: {user['id']}, Blocked Until: {user['blocked_until']}" for user in blocked_users])
-
-    await callback.message.answer(f"Заблокированные пользователи:\n{blocked_users_text}")
+    blocked_list = "\n".join([f"ID: {user['id']} - Разблокировка: {user['blocked_until']}" for user in blocked_users]) or "Нет заблокированных пользователей."
+    await callback.message.answer(f"Заблокированные пользователи:\n{blocked_list}")
+    await callback.answer()
 
 @dp.callback_query(F.data == "unblock_user")
 async def unblock_user(callback: CallbackQuery):
-    await callback.message.answer("Введите ID пользователя для разблокировки:")
-    dp.current_state[callback.from_user.id] = "waiting_for_unblock_id"
+    await callback.answer("Введите ID пользователя для разблокировки:")
+    dp.register_message_handler(handle_unblock_user, state="unblock_user")
 
-@dp.message(lambda message: dp.current_state.get(message.from_user.id) == "waiting_for_unblock_id")
-async def process_unblock_id(message: Message):
+async def handle_unblock_user(message: Message):
     user_id = int(message.text)
     db.unblock_user(user_id)
-    await message.answer(f"Пользователь {user_id} разблокирован.")
-    dp.current_state[message.from_user.id] = None
+    await message.answer(f"✅ Пользователь {user_id} разблокирован.")
 
 @dp.message(Command("start"))
 async def start_command(message: Message):
@@ -197,7 +184,7 @@ async def start_command(message: Message):
         return
 
     user = db.get_user_cursor(message.from_user.id)
-
+    
     if user and user.get("status") == 2:  # Проверка, находится ли пользователь в диалоге
         await message.answer("❌ Вы уже находитесь в диалоге.")
         return
@@ -403,7 +390,7 @@ async def next_command(message: Message):
                 parse_mode=ParseMode.HTML,
                 reply_markup=feedback_markup
             )
-
+        
         # Убираем кнопку завершения диалога и показываем кнопку поиска
         await message.answer("✅ Диалог завершен.", reply_markup=online.builder("🔎 Найти чат"))
     else:
