@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 
 class database:
     def __init__(self, db_name: str):
@@ -172,9 +172,6 @@ class database:
                 })
 
         # Сортируем кандидатов с учетом рейтинга и пересечения интересов:
-        # 1) Чем больше совпадений интересов - выше
-        # 2) Пользователи с >=5 негативными рейтингами идут в конец
-        # 3) Пользователи с >=5 положительными рейтингами идут в начало
         def sort_key(c):
             interest_score = len(user_interests & c['interests'])
             rating_score = 0
