@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timedelta
-from aiogram import Bot, F, Dispatcher
+from aiogram import Bot, F, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import (
     Message,
@@ -15,9 +15,11 @@ from aiogram.types import (
 )
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
-from database import database
-from keyboard import online
+from database import Database
+from keyboard import online, gender_keyboard, interests_keyboard
 
 if not (token := os.getenv("TELEGRAM_BOT_TOKEN")):
     raise ValueError("TELEGRAM_BOT_TOKEN не установлен!")
@@ -27,9 +29,19 @@ PORT = int(os.getenv("PORT", 10000))
 
 bot = Bot(token)
 dp = Dispatcher()
-db = database("users.db")
+db = Database("users.db")
 
 DEVELOPER_ID = 1040929628
+
+# Состояния для регистрации и админки
+class RegistrationStates(StatesGroup):
+    GENDER = State()
+    AGE = State()
+
+class DevCommands(StatesGroup):
+    USER_ACTION = State()
+    VIP_ACTION = State()
+    UNBAN_ACTION = State()
 
 # Middleware для проверки блокировки пользователя
 class BlockedUserMiddleware:
@@ -58,17 +70,25 @@ async def handle_block(event: ChatMemberUpdated):
 async def check_chats_task():
     while True:
         now = datetime.now()
+        # Проверка долгого поиска
         long_searches = db.get_users_in_long_search(now - timedelta(minutes=5))
         for user in long_searches:
             db.stop_search(user['id'])
             try:
-                await bot.send_message(user['id'], "❌ Поиск автоматически остановлен из-за долгого ожидания", reply_markup=online.builder("🔎 Найти чат"))
+                await bot.send_message(user['id'], "❌ Поиск автоматически остановлен из-за долгого ожидания", 
+                                      reply_markup=online.builder("🔎 Найти чат"))
             except Exception:
                 pass
         
+        # Проверка истечения блокировок
         expired_blocks = db.get_expired_blocks(now)
         for user in expired_blocks:
             db.unblock_user(user['id'])
+        
+        # Проверка истечения VIP
+        expired_vips = db.get_expired_vips(now)
+        for user in expired_vips:
+            await bot.send_message(user['id'], "💎 Ваш VIP статус истек! Пригласите друзей для продления /ref")
         
         await asyncio.sleep(180)
 
@@ -107,7 +127,6 @@ async def handle_report(callback: CallbackQuery):
             report_msg,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=get_block_keyboard(last_rival_id)
-        )
         await callback.answer("✅ Жалоба отправлена")
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
@@ -140,47 +159,183 @@ async def handle_ignore(callback: CallbackQuery):
     await callback.answer("🚫 Жалоба проигнорирована")
     await callback.message.edit_reply_markup(reply_markup=None)
 
-# Проверка на доступность команд в группах
 async def is_private_chat(message: Message) -> bool:
     return message.chat.type == ChatType.PRIVATE
 
 @dp.message(Command("dev"))
-async def dev_menu(message: Message):
-    if message.from_user.id == DEVELOPER_ID:
-        stats = {"total_users": "N/A"}
-        try:
-            db.cursor.execute("SELECT COUNT(*) FROM users")
-            stats["total_users"] = db.cursor.fetchone()[0]
-        except Exception:
-            pass
+async def dev_menu(message: Message, state: FSMContext):
+    if message.from_user.id != DEVELOPER_ID:
+        return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔎 Поиск пользователя", callback_data="dev_find_user")],
+        [InlineKeyboardButton(text="🎖 Выдать VIP", callback_data="dev_give_vip")],
+        [InlineKeyboardButton(text="🔓 Разблокировать", callback_data="dev_unban")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="dev_stats")]
+    ])
+    
+    await message.answer("👨💻 Меню разработчика:", reply_markup=keyboard)
+    await state.set_state(DevCommands.USER_ACTION)
 
-        await message.answer(
-            f"👨‍💻 Меню разработчика\n"
-            f"Пользователей в базе: {stats['total_users']}\n"
-            "Жалобы направляются сюда автоматически."
+@dp.callback_query(F.data.startswith("dev_"))
+async def dev_actions(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[1]
+    
+    if action == "give_vip":
+        await callback.message.answer("Введите ID пользователя и количество дней через пробел:")
+        await state.set_state(DevCommands.VIP_ACTION)
+    
+    elif action == "unban":
+        await callback.message.answer("Введите ID пользователя для разблокировки:")
+        await state.set_state(DevCommands.UNBAN_ACTION)
+    
+    elif action == "stats":
+        stats = {
+            "total_users": db.get_total_users(),
+            "active_vips": db.get_active_vips_count(),
+            "banned_users": db.get_banned_users_count()
+        }
+        await callback.message.answer(
+            f"📊 Статистика бота:\n"
+            f"👥 Всего пользователей: {stats['total_users']}\n"
+            f"💎 Активных VIP: {stats['active_vips']}\n"
+            f"🚫 Заблокированных: {stats['banned_users']}"
         )
+    
+    await callback.answer()
+
+@dp.message(DevCommands.VIP_ACTION)
+async def handle_vip_action(message: Message, state: FSMContext):
+    try:
+        user_id, days = map(int, message.text.split())
+        db.add_vip_days(user_id, days)
+        await message.answer(f"✅ Пользователю {user_id} выдан VIP на {days} дней")
+        await bot.send_message(user_id, f"🎉 Вам выдан VIP статус на {days} дней!")
+    except:
+        await message.answer("❌ Неверный формат. Пример: 123456 7")
+    await state.clear()
+
+@dp.message(DevCommands.UNBAN_ACTION)
+async def handle_unban_action(message: Message, state: FSMContext):
+    try:
+        user_id = int(message.text)
+        db.unblock_user(user_id)
+        await message.answer(f"✅ Пользователь {user_id} разблокирован")
+        await bot.send_message(user_id, "🔓 Ваша блокировка снята!")
+    except:
+        await message.answer("❌ Неверный ID пользователя")
+    await state.clear()
 
 @dp.message(Command("start"))
-async def start_command(message: Message):
+async def start_command(message: Message, state: FSMContext):
     if not await is_private_chat(message):
         await message.answer("🚫 Команды бота недоступны в группах.")
         return
 
+    # Обработка реферальной ссылки
+    referrer_id = None
+    if len(message.text.split()) > 1:
+        ref_code = message.text.split()[1]
+        if ref_code.startswith('ref'):
+            referrer_id = int(ref_code[3:])
+
     user = db.get_user_cursor(message.from_user.id)
     
-    if user and user.get("status") == 2:  # Проверка, находится ли пользователь в диалоге
+    if user and user.get("status") == 2:
         await message.answer("❌ Вы уже находитесь в диалоге.")
         return
 
     if not user:
         db.new_user(message.from_user.id)
+        if referrer_id and db.get_user_cursor(referrer_id):
+            db.handle_referral(message.from_user.id, referrer_id)
+            await bot.send_message(referrer_id, "🎉 По вашей ссылке зарегистрировался новый пользователь! +1 день VIP")
+
+    user = db.get_user_cursor(message.from_user.id)
+    
+    if not user['gender'] or not user['age']:
+        await message.answer("📝 Для использования бота необходимо пройти регистрацию!")
+        await message.answer("Выберите ваш пол:", reply_markup=gender_keyboard())
+        await state.set_state(RegistrationStates.GENDER)
+        return
+
+    await message.answer(
+        "👥 Добро пожаловать в Анонимный Чат Бот!\n"
+        "💎 Приглашайте друзей и получайте VIP статус /ref\n\n"
+        "🗣 Начните общение:",
+        reply_markup=online.builder("🔎 Найти чат")
+    )
+
+@dp.message(RegistrationStates.GENDER)
+async def process_gender(message: Message, state: FSMContext):
+    gender = message.text.lower()
+    if gender not in ['мужской', 'женский']:
+        await message.answer("❌ Пожалуйста, выберите пол используя кнопки ниже")
+        return
+    
+    await state.update_data(gender=gender)
+    await message.answer("📅 Введите ваш возраст:")
+    await state.set_state(RegistrationStates.AGE)
+
+@dp.message(RegistrationStates.AGE)
+async def process_age(message: Message, state: FSMContext):
+    try:
+        age = int(message.text)
+        if not 12 <= age <= 100:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите корректный возраст (число от 12 до 100)")
+        return
+    
+    data = await state.get_data()
+    db.update_user_info(message.from_user.id, data['gender'], age)
+    await state.clear()
+    
+    # Реклама VIP после регистрации
+    await message.answer(
+        "✅ Регистрация завершена!\n\n"
+        "💎 Получите VIP статус для:\n"
+        "➢ Поиска по полу собеседника\n"
+        "➢ Приоритета в поиске\n"
+        "➢ Эксклюзивных функций\n\n"
+        "Используйте /ref для приглашения друзей!",
+        reply_markup=online.builder("🔎 Найти чат")
+    )
+
+@dp.message(Command("ref"))
+async def ref_command(message: Message):
+    code = db.get_referral_code(message.from_user.id)
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start=ref{code}"
+    await message.answer(
+        f"🔗 Ваша реферальная ссылка:\n{ref_link}\n\n"
+        "💎 За каждого приглашенного друга вы получаете:\n"
+        "➢ +1 день VIP статуса\n"
+        "➢ Приоритет в поиске собеседника\n"
+        "➢ Особый статус в профиле",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📤 Поделиться", url=f"tg://msg_url?url={ref_link}")
+        ]])
+    )
+
+@dp.message(Command("vip"))
+async def vip_info(message: Message):
+    if db.get_vip_status(message.from_user.id):
+        vip_until = datetime.fromisoformat(db.get_user_cursor(message.from_user.id)['vip_until'])
+        days_left = (vip_until - datetime.now()).days
         await message.answer(
-            "👥 Добро пожаловать в Анонимный Чат Бот!\n"
-            "🗣 Наш бот предоставляет возможность анонимного общения.",
-            reply_markup=online.builder("🔎 Найти чат")
+            f"🌟 Ваш VIP статус активен ещё {days_left} дней!\n"
+            f"Дата окончания: {vip_until.strftime('%d.%m.%Y %H:%M')}\n\n"
+            "💎 Продлите статус приглашая друзей /ref"
         )
     else:
-        await search_chat(message)
+        await message.answer(
+            "💎 VIP статус открывает новые возможности:\n\n"
+            "➢ Поиск по полу собеседника\n"
+            "➢ Приоритет в очереди на поиск\n"
+            "➢ Расширенные настройки профиля\n\n"
+            "🎁 Получить VIP можно приглашая друзей /ref\n"
+            "Или обратитесь к администратору"
+        )
 
 @dp.message(Command("search"))
 async def search_command(message: Message):
@@ -189,17 +344,13 @@ async def search_command(message: Message):
         return
     await search_chat(message)
 
-@dp.message(F.text.regexp(r'https?://\S+|@\w+') | F.caption.regexp(r'https?://\S+|@\w+'))
-async def block_links(message: Message):
-    await message.delete()
-    await message.answer("❌ Отправка ссылок и упоминаний запрещена!")
-
 @dp.message(F.text == "🔎 Найти чат")
 async def search_chat(message: Message):
     if not await is_private_chat(message):
         await message.answer("🚫 Команды бота недоступны в группах.")
         return
 
+    # Проверка подписки
     if not await is_subscribed(message.from_user.id):
         subscribe_markup = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Подписаться", url="https://t.me/freedom346")],
@@ -216,38 +367,83 @@ async def search_chat(message: Message):
         rival = db.search(message.from_user.id)
 
         if not rival:
+            # Реклама VIP для ускорения поиска
+            if not db.get_vip_status(message.from_user.id):
+                await message.answer(
+                    "⏳ Обычный поиск может занять больше времени...\n"
+                    "💎 Получите VIP статус для приоритета в поиске /vip"
+                )
+            
             await message.answer(
                 "🔎 Ищем собеседника...",
                 reply_markup=online.builder("❌ Завершить поиск")
             )
         else:
-            # Уведомление о совпадении интересов
             interests_text = ""
-            user_interests = set(user['interests'].split(',')) if isinstance(user['interests'], str) else user['interests']
-            rival_interests = set(rival['interests'].split(',')) if isinstance(rival['interests'], str) else rival['interests']
-            common_interests = user_interests & rival_interests
+            user_interests = user['interests'].split(',') if user['interests'] else []
+            rival_interests = rival['interests'].split(',') if rival['interests'] else []
+            common_interests = list(set(user_interests) & set(rival_interests))
             if common_interests:
-                interests_text = f" (интересы: {', '.join(common_interests)})"
+                interests_text = f" (совпадение интересов: {', '.join(common_interests)})"
 
             db.start_chat(message.from_user.id, rival["id"])
             text = (
-                f"Собеседник найден 🐵{interests_text}\n"
-                "/next — искать нового собеседника\n"
+                f"👤 Собеседник найден {interests_text}\n"
+                "💬 Теперь вы можете общаться анонимно\n\n"
+                "/next — новый собеседник\n"
                 "/stop — закончить диалог\n"
-                "/interests — добавить интересы поиска\n\n"
-                f"<code>{'https://t.me/Anonchatyooubot'}</code>"
+                "/interests — изменить интересы"
             )
-            await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
-            await bot.send_message(rival["id"], text, parse_mode=ParseMode.HTML, reply_markup=online.builder("❌ Завершить диалог"))
+            markup = online.builder("❌ Завершить диалог")
+            await message.answer(text, reply_markup=markup)
+            await bot.send_message(rival["id"], text, reply_markup=markup)
 
-@dp.callback_query(F.data == "check_sub")
-async def check_subscription(callback: CallbackQuery):
-    if await is_private_chat(callback.message):
-        if await is_subscribed(callback.from_user.id):
-            await callback.message.edit_text("✅ Спасибо за подписку! Теперь вы можете использовать бота.")
-            await search_chat(callback.message)
-        else:
-            await callback.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
+@dp.message(Command("interests"))
+async def interests_command(message: Message):
+    if not await is_private_chat(message):
+        await message.answer("🚫 Команды бота недоступны в группах.")
+        return
+
+    user = db.get_user_cursor(message.from_user.id)
+    current_interests = user['interests'].split(',') if user and user['interests'] else []
+    
+    await message.answer(
+        "🎯 Выберите ваши интересы для поиска собеседника:",
+        reply_markup=interests_keyboard(current_interests)
+    )
+
+@dp.callback_query(F.data.startswith("toggle_"))
+async def toggle_interest(callback: CallbackQuery):
+    interest = callback.data.split("_", 1)[1]
+    user = db.get_user_cursor(callback.from_user.id)
+    current = user['interests'].split(',') if user and user['interests'] else []
+    
+    if interest in current:
+        current.remove(interest)
+    else:
+        current.append(interest)
+    
+    db._update_interests(callback.from_user.id, current)
+    await callback.message.edit_reply_markup(
+        reply_markup=interests_keyboard(current)
+    )
+
+@dp.callback_query(F.data == "save_interests")
+async def save_interests(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("✅ Интересы сохранены")
+    await callback.message.answer(
+        "🎯 Настройки поиска обновлены!\n"
+        "💎 VIP пользователи получают больше совпадений /vip"
+    )
+
+@dp.callback_query(F.data == "reset_interests")
+async def reset_interests(callback: CallbackQuery):
+    db.clear_interests(callback.from_user.id)
+    await callback.answer("✅ Интересы сброшены")
+    await callback.message.edit_reply_markup(
+        reply_markup=interests_keyboard([])
+    )
 
 @dp.message(Command("stop"))
 async def stop_command(message: Message):
@@ -269,9 +465,8 @@ async def stop_command(message: Message):
         for user_id in [message.from_user.id, rival_id]:
             await bot.send_message(
                 user_id,
-                "Диалог завершен.\nОставьте мнение о собеседнике:\n"
-                f"<code>{'https://t.me/Anonchatyooubot'}</code>",
-                parse_mode=ParseMode.HTML,
+                "Диалог завершен. Оцените собеседника:\n"
+                "💎 Хотите больше возможностей? Получите VIP /vip",
                 reply_markup=feedback_markup
             )
     else:
@@ -522,7 +717,6 @@ async def handler_message(message: Message):
 
         except Exception as e:
             print(f"Ошибка пересылки сообщения: {e}")
-
 async def is_subscribed(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id="@freedom346", user_id=user_id)
@@ -537,12 +731,13 @@ async def main():
     asyncio.create_task(check_chats_task())
 
     await bot.set_my_commands([
-        BotCommand(command="/start", description="Начать поиск"),
+        BotCommand(command="/start", description="Начать работу"),
         BotCommand(command="/stop", description="Закончить диалог"),
         BotCommand(command="/next", description="Новый собеседник"),
         BotCommand(command="/search", description="Начать поиск"),
-        BotCommand(command="/link", description="Поделиться профилем"),
         BotCommand(command="/interests", description="Настроить интересы"),
+        BotCommand(command="/ref", description="Реферальная система"),
+        BotCommand(command="/vip", description="VIP статус"),
         BotCommand(command="/dev", description="Меню разработчика")
     ])
 
