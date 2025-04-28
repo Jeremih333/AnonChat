@@ -127,6 +127,7 @@ async def handle_report(callback: CallbackQuery):
             report_msg,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=get_block_keyboard(last_rival_id)
+        )
         await callback.answer("✅ Жалоба отправлена")
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
