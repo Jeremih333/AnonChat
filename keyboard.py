@@ -9,6 +9,9 @@ class Online:
             ]
         )
 
+# Создаем экземпляр класса для экспорта
+online = Online()
+
 def gender_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
